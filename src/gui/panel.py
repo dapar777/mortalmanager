@@ -67,20 +67,31 @@ def _com_init(pythoncom) -> None:
 
 
 def fit_menu_on_screen(menu, global_pos) -> None:
-    """Show ``menu`` at ``global_pos``; if its natural height exceeds the screen,
-    switch to the compact QSS variant (property ``compact``: "true", then
-    "dense") first, so Qt does not have to break it into two columns."""
+    """Show ``menu`` at ``global_pos``. If its natural height exceeds the
+    screen, reduce the vertical item padding just enough to fit (6 px → 0 px,
+    per-menu stylesheet); only if that is still too tall switch to the dense
+    QSS variant (smaller font). A menu that fits is left untouched."""
     from PySide6.QtWidgets import QApplication
 
     screen = QApplication.screenAt(global_pos) or QApplication.primaryScreen()
     if screen is not None:
-        avail = screen.availableGeometry().height()
-        for level in (None, "true", "dense"):
-            if level:
-                menu.setProperty("compact", level)
+        avail = screen.availableGeometry().height() - theme.px(8)
+        natural = _natural_height(menu)
+        if natural > avail:
+            n_items = max(1, sum(1 for a in menu.actions() if a.isVisible() and not a.isSeparator()))
+            base_pad = theme.px(6)
+            # each px of vertical padding costs 2 px per item
+            reduce = -(-(natural - avail) // (2 * n_items))
+            pad = max(0, base_pad - reduce)
+            sep = max(theme.px(1), theme.px(6) - reduce)
+            menu.setStyleSheet(
+                f"QMenu::item{{padding:{pad}px {theme.px(28)}px {pad}px {theme.px(10)}px;}}"
+                f"QMenu::separator{{margin:{sep}px {theme.px(8)}px;}}"
+            )
+            widgets.repolish(menu)
+            if _natural_height(menu) > avail:
+                menu.setProperty("compact", "dense")
                 widgets.repolish(menu)
-            if _natural_height(menu) <= avail:
-                break
     menu.exec(global_pos)
 
 
@@ -318,6 +329,8 @@ class PanelWidget(QFrame):
         self._table = FileTableView(self)
         self._table.entry_activated.connect(self._on_entry_activated)
         self._table.space_pressed.connect(self._toggle_selection)
+        self._table.toggle_rows.connect(self._toggle_entries)
+        self._table.mark_rows.connect(self._mark_entries)
         self._table.sort_requested.connect(self._on_sort_requested)
         self._table.filter_requested.connect(self.show_filter)
         self._table.file_model().rename_requested.connect(self._on_rename_committed)
@@ -431,6 +444,10 @@ class PanelWidget(QFrame):
             tab.history.push(resolved)
         if resolved != tab.path:
             tab.cursor_name = ""
+            pending = getattr(self, "_pending_cursor", "")
+            if pending:
+                tab.cursor_name = pending
+                self._pending_cursor = ""
             if tab.filter_text:
                 tab.filter_text = ""
                 self._filter_edit.blockSignals(True)
@@ -626,6 +643,19 @@ class PanelWidget(QFrame):
             self._current_tab.cursor_name = cur.name
         self.refresh()
 
+    def reveal(self, path: str) -> None:
+        """Go to the folder of ``path`` and put the cursor on it (palette file hit)."""
+        p = Path(path)
+        target_dir = p if p.is_dir() else p.parent
+        if p.is_dir():
+            self.navigate_to(str(p))
+            return
+        self.set_pending_cursor(p.name)
+        if str(target_dir).lower() == self.current_path.lower():
+            self.refresh()
+        else:
+            self.navigate_to(str(target_dir))
+
     def set_pending_cursor(self, name: str) -> None:
         """Name the cursor should land on after the next refresh (rename, mkdir…)."""
         self._pending_cursor = name
@@ -659,6 +689,29 @@ class PanelWidget(QFrame):
         sel.toggle(entry)
         self._table.file_model().set_selected(set(sel.selected_paths))
         self._update_info(self._table.file_model().get_all_entries())
+
+    def _toggle_entries(self, entries: list[FileEntry]) -> None:
+        """Shift+cursor keys / Ctrl+click: flip the mark of every entry."""
+        sel = self._current_tab.selection
+        for e in entries:
+            if not e.is_parent:
+                sel.toggle(e)
+        self._apply_selection()
+
+    def _mark_entries(self, entries: list[FileEntry]) -> None:
+        """Shift+click: mark the whole range (never unmarks)."""
+        sel = self._current_tab.selection
+        for e in entries:
+            sel.select(e)
+        self._apply_selection()
+
+    def toggle_current(self) -> None:
+        """Insert / Space from the menu or palette: toggle the entry under the cursor and step down."""
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtWidgets import QApplication
+        QApplication.sendEvent(self._table, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Insert,
+                                                       Qt.KeyboardModifier.NoModifier))
 
     def _on_table_mouse_press(self, event) -> None:
         FileTableView.mousePressEvent(self._table, event)

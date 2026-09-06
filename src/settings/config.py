@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from src.database.db import DatabaseManager
+from src.index.file_index import DEFAULT_EXCLUDE_NAMES, default_exclude_paths
 
 
 _APP_DATA_DIR = Path.home() / "AppData" / "Roaming" / "MortalManager"
@@ -46,6 +47,12 @@ class AppConfig:
     fkeys_bar_visible: bool = True
     cmd_expand_shortcut: str = "Ctrl+E"
     cmd_expanded: bool = False
+    # file-name index for the command palette (see src/index)
+    index_enabled: bool = True
+    index_roots: list[str] = field(default_factory=lambda: ["C:\\"])
+    index_exclude_names: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDE_NAMES))
+    index_exclude_paths: list[str] = field(default_factory=default_exclude_paths)
+    index_rescan_hours: float = 24.0
 
 
 class ConfigManager:
@@ -93,6 +100,15 @@ class ConfigManager:
         cfg.fkeys_bar_visible = d.get("fkeys_bar_visible", cfg.fkeys_bar_visible)
         cfg.cmd_expand_shortcut = d.get("cmd_expand_shortcut", cfg.cmd_expand_shortcut)
         cfg.cmd_expanded = d.get("cmd_expanded", cfg.cmd_expanded)
+        cfg.index_enabled = bool(d.get("index_enabled", cfg.index_enabled))
+        for key in ("index_roots", "index_exclude_names", "index_exclude_paths"):
+            val = d.get(key)
+            if isinstance(val, list):
+                setattr(cfg, key, [str(x) for x in val])
+        try:
+            cfg.index_rescan_hours = float(d.get("index_rescan_hours", cfg.index_rescan_hours))
+        except (TypeError, ValueError):
+            pass
 
         lp = d.get("left_panel", {})
         if isinstance(lp, dict):
@@ -125,6 +141,11 @@ class ConfigManager:
         self._db.set_setting("fkeys_bar_visible", cfg.fkeys_bar_visible)
         self._db.set_setting("cmd_expand_shortcut", cfg.cmd_expand_shortcut)
         self._db.set_setting("cmd_expanded", cfg.cmd_expanded)
+        self._db.set_setting("index_enabled", cfg.index_enabled)
+        self._db.set_setting("index_roots", list(cfg.index_roots))
+        self._db.set_setting("index_exclude_names", list(cfg.index_exclude_names))
+        self._db.set_setting("index_exclude_paths", list(cfg.index_exclude_paths))
+        self._db.set_setting("index_rescan_hours", cfg.index_rescan_hours)
         self._db.set_setting("left_panel", {
             "sort_field": cfg.left_panel.sort_field,
             "sort_order": cfg.left_panel.sort_order,

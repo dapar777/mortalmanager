@@ -43,6 +43,7 @@ from src.settings.config import ConfigManager
 from src.solarqt import icons, theme, widgets
 from src.solarqt.widgets import ActionButton, IconButton, Toast, VLine
 from .drive_bar import DriveBar
+from .index_service import IndexService
 from .panel import PanelWidget
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
         self._build_shortcuts()
         self._restore_geometry()
         self._update_zoom_label()
+        self._index = IndexService(self._cfg, self)
 
         # Global event filter for Ctrl+Wheel zoom
         QApplication.instance().installEventFilter(self)
@@ -298,6 +300,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction("E&xit\tAlt+F4", self.close)
 
         mark_menu = mb.addMenu("&Mark")
+        mark_menu.addAction("&Toggle Mark\tIns / Space", self._toggle_mark)
         mark_menu.addAction("Select &All\tCtrl+A / Num+*", self._active_panel_widget_select_all)
         mark_menu.addAction("&Deselect All\tNum+-", self._deselect_all)
         mark_menu.addAction("&Invert Selection\tNum+/", self._invert_selection)
@@ -310,6 +313,7 @@ class MainWindow(QMainWindow):
         cmd_menu = mb.addMenu("&Commands")
         cmd_menu.addAction(icons.icon("search"), "&Search…\tAlt+F7", self._open_search)
         cmd_menu.addAction(icons.icon("filter"), "&Quick Filter\tCtrl+S", lambda: self._active_panel_widget.show_filter())
+        cmd_menu.addAction(icons.icon("settings"), "File &Index Settings…", self._open_index_settings)
         cmd_menu.addAction(icons.icon("rename"), "Bulk &Rename…\tCtrl+M", self._bulk_rename)
         cmd_menu.addSeparator()
         cmd_menu.addAction(icons.icon("scale"), "Calculate Si&ze", self._calc_size)
@@ -535,8 +539,70 @@ class MainWindow(QMainWindow):
             new = [path] + [r for r in recent if r != path]
             self._cfg.set(self._PALETTE_RECENT_KEY, new[: RECENT_MAX * 2])
 
-        dlg = CommandPalette(self._build_palette_commands(), self, recent=recent, on_run=remember)
+        dlg = CommandPalette(self._build_palette_commands(), self, recent=recent, on_run=remember,
+                             extra_search=self._palette_extra_search, mode_search=self._palette_mode_search)
         dlg.exec()
+
+    # ---- palette: files from the index, terminal history
+
+    def _file_hit(self, path: str, name: str, is_dir: bool) -> dict:
+        p = self._active_panel_widget
+        return {
+            "category": "File", "label": f"{name}   —   {IndexService.display_dir(path)}",
+            "icon": "folder" if is_dir else "file", "tooltip": path,
+            "run": lambda path=path: p.reveal(path),
+        }
+
+    def _file_search(self, query: str, limit: int = 200, kind: str = "all") -> list[dict]:
+        return [self._file_hit(path, name, is_dir)
+                for path, name, is_dir in self._index.search(query, limit, kind=kind)]
+
+    def _palette_mode_search(self, mode: str, query: str) -> list[dict]:
+        """Prefix modes: 'c ' terminal history, 'a ' files & folders, 'f ' files, 'd ' folders.
+        The query may be words, a *? mask or a regex (index.pattern.parse)."""
+        from src.index.pattern import parse
+        if mode == "terminal":
+            sq = parse(query)
+            return [self._terminal_entry(c) for c in self._terminal.history(200) if not query or sq.matches(c)]
+        kind = {"all_entries": "all", "files": "files", "dirs": "dirs"}.get(mode)
+        if kind and len(query) >= 2:
+            return self._file_search(query, 200, kind=kind)
+        return []
+
+    def _terminal_entry(self, cmd: str) -> dict:
+        return {"category": "Terminal", "label": cmd, "icon": "terminal",
+                "run": lambda c=cmd: self._prefill_terminal(c)}
+
+    def _terminal_history_entries(self) -> list[dict]:
+        return [self._terminal_entry(c) for c in self._terminal.history(60)]
+
+    def _palette_extra_search(self, query: str) -> list[dict]:
+        """Top-level extras for a 3+ character query: a few files and matching commands."""
+        from src.index.pattern import parse
+        out = self._file_search(query, 6)
+        sq = parse(query)
+        for cmd in self._terminal.history(60):
+            if sq.matches(cmd):
+                out.append(self._terminal_entry(cmd))
+                if len(out) >= 10:
+                    break
+        return out
+
+    def _prefill_terminal(self, cmd: str) -> None:
+        """Palette pick from the terminal history: put it into the command line
+        and focus it – the user edits / confirms with Enter, nothing runs yet."""
+        if not self._terminal.isVisible():
+            self._act_cmdbar.setChecked(True)
+            self._toggle_cmdbar()
+        self._terminal.prefill(cmd)
+
+    def _open_index_settings(self) -> None:
+        from .dialogs.index_dialog import IndexSettingsDialog
+        dlg = IndexSettingsDialog(self._index.config(), self._index.status_text(), self, on_rescan=self._index.rescan)
+        self._index.status_changed.connect(lambda _s: dlg.set_status(self._index.status_text()))
+        if dlg.exec():
+            self._index.apply_config(dlg.result_config())
+            Toast.show_message(self, "Index settings saved", "success")
 
     def _build_palette_commands(self) -> list[dict]:
         """Every user-facing command, for the command palette (multi-level).
@@ -548,10 +614,13 @@ class MainWindow(QMainWindow):
         from src.core.file_model import SortField, SortOrder
 
         def e(category: str, label: str, run=None, shortcut: str = "", children=None,
-              icon: str | None = None, checked: bool = False) -> dict:
+              icon: str | None = None, checked: bool = False, search=None, status=None) -> dict:
             d = {"category": category, "label": label, "run": run, "shortcut": shortcut}
             if children is not None:
                 d["children"] = children
+            if search is not None:
+                d["search"] = search
+                d["status"] = status
             if icon:
                 d["icon"] = icon
             if checked:
@@ -648,6 +717,7 @@ class MainWindow(QMainWindow):
             e("Files", "Open with…", lambda: p._open_with(p.selected_entries()[0].full_path) if p.selected_entries() else None),
             e("Files", "Run as administrator", lambda: p._run_as_admin(p.selected_entries()[0].full_path) if p.selected_entries() else None, icon="shield"),
             # mark
+            e("Mark", "Toggle mark under cursor", self._toggle_mark, "Ins / Space"),
             e("Mark", "Select all", self._active_panel_widget_select_all, "Ctrl+A"),
             e("Mark", "Deselect all", self._deselect_all, "Num -"),
             e("Mark", "Invert selection", self._invert_selection, "Num /"),
@@ -682,6 +752,13 @@ class MainWindow(QMainWindow):
             e("Panels", "Open this folder in the other panel", lambda: other.navigate_to(p.current_path)),
             e("Panels", "Open the other panel's folder here", lambda: p.navigate_to(other.current_path)),
             e("Panels", "Swap panels", swap_panels),
+            # files on disk, terminal history
+            e("Navigate", "Find file on disk", search=lambda q: self._file_search(q), icon="search",
+              status=self._index.status_text),
+            e("Tools", "Terminal history", children=self._terminal_history_entries, icon="terminal"),
+            e("Tools", "File index settings…", self._open_index_settings, icon="settings"),
+            e("Tools", "Rescan file index now", lambda: (self._index.rescan(), Toast.show_message(self, "Rescan requested", "info")),
+              icon="refresh"),
             # tools
             e("Tools", "Open terminal here", self._open_terminal, icon="terminal"),
             e("Tools", "Focus embedded terminal", self._focus_cmdline, "Ctrl+Down", icon="terminal"),
@@ -860,6 +937,9 @@ class MainWindow(QMainWindow):
                 self._submit(JobSpec(job_type=JobType.RENAME, sources=[old_path], destination=new_path))
 
     # ------------------------------------------------------------------ selection helpers
+
+    def _toggle_mark(self) -> None:
+        self._active_panel_widget.toggle_current()
 
     def _active_panel_widget_select_all(self) -> None:
         self._active_panel_widget.select_all()
@@ -1078,5 +1158,6 @@ class MainWindow(QMainWindow):
             cfg.window_height = self.height()
         cfg.zoom = theme.zoom()
         self._cfg.save()
+        self._index.stop()
         self._job_queue.deleteLater()
         event.accept()

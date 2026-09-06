@@ -471,6 +471,9 @@ QFrame#popover {{ background: {t.paper}; border: 1px solid {t.border}; border-ra
 QFrame#dropZone {{ background: transparent; border: {p(2)}px dashed {t.dashed}; border-radius: {r_lg}px; }}
 QFrame#dropZone[active="true"] {{ border-color: {t.accent}; background: {sel_tint}; }}
 
+/* command palette: denser rows than a generic list */
+QListWidget#paletteList::item {{ padding: {p(1)}px {p(6)}px; }}
+
 /* side navigation */
 QListWidget#nav {{ background: transparent; border: 0; padding: {p(4)}px; }}
 QListWidget#nav::item {{ padding: {p(6)}px {p(10)}px; border-radius: {r_sm}px; color: {t.text2}; }}

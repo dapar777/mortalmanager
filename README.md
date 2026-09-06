@@ -26,10 +26,11 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | --- | --- |
 | Zoom | Ctrl+kolečko, Ctrl++ / Ctrl+−, Ctrl+0 reset (70–200 %) |
 | Tmavé / světlé téma | ikona v hlavičce, menu *Show → Dark Theme* |
-| Paleta příkazů (víceúrovňová: řazení, disky, taby, oblíbené, historie, téma, zoom; nahoře naposledy použité) | Ctrl+Shift+P, Backspace = o úroveň zpět |
+| Paleta příkazů (víceúrovňová: řazení, disky, taby, oblíbené, historie, téma, zoom; nahoře naposledy použité; od 3 znaků i soubory z indexu a příkazy z historie terminálu) |
+| Prefixy palety | mezera = jen příkazy, `c ` historie terminálu (předvyplní řádku), `a ` soubory+složky, `f ` soubory, `d ` složky; dotaz může být maska `*.txt` nebo regex | Ctrl+Shift+P, Backspace = o úroveň zpět |
 | Přejmenovat v místě / hromadně | F2 (Shift+F6) / Ctrl+M |
 | Přepnutí panelu | Tab |
-| Označení souboru | Mezerník, Ctrl+A, Num +/−/\* |
+| Označení souborů (jako v TC) | Insert / mezerník (přepne a posune kurzor), Shift+šipky / PgUp / PgDn / Home / End, Shift+klik = rozsah, Ctrl+klik = přepnout, Ctrl+A, Num +/−/\* |
 | Kopírovat názvy / celé cesty do schránky | Ctrl+Shift+C / Ctrl+Alt+C (menu Mark) |
 | Historie procházení panelu | Alt+Down |
 | Rychlý filtr seznamu (jako v TC) | Ctrl+S nebo `*`, Esc zruší, Enter zpět do seznamu |
@@ -49,3 +50,11 @@ python -m mypy src
 ```
 
 Nastavení a stav aplikace (včetně tématu a zoomu) se ukládají do SQLite v `%APPDATA%\MortalManager`.
+
+## Index souborů
+
+Paleta hledá soubory podle názvu v indexu (`%APPDATA%\MortalManager\index.db`, SQLite FTS5 s trigramy). Co se
+indexuje, nastavíte v *Commands → File Index Settings…* (výchozí `C:\` bez `C:\Windows`, `ProgramData`, dočasných
+složek, `node_modules`, `.git` apod.). Index udržuje vždy jen jedna běžící instance (Windows mutex; po jejím
+ukončení převezme práci další), ostatní z něj jen čtou. Změny na disku se promítají živě přes sledování
+adresářů, plný přeskan proběhne po nastaveném intervalu nebo na vyžádání.

@@ -380,11 +380,17 @@ class _NameDelegate(QStyledItemDelegate):
             QTimer.singleShot(0, lambda: editor.setSelection(0, stem_len))
 
 
+_SHIFT_NAV_KEYS = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+                   Qt.Key.Key_Home, Qt.Key.Key_End)
+
+
 class FileTableView(QTableView):
     """QTableView configured for a file listing (keyboard-first)."""
 
     entry_activated = Signal(object)   # FileEntry
-    space_pressed = Signal(object)     # FileEntry – toggle selection
+    space_pressed = Signal(object)     # FileEntry – toggle selection (Space / Insert)
+    toggle_rows = Signal(list)         # [FileEntry] – toggle each (Shift+cursor keys, Ctrl+click)
+    mark_rows = Signal(list)           # [FileEntry] – select each (Shift+click range)
     sort_requested = Signal(object)    # SortField (header click)
     filter_requested = Signal(str)     # '*' typed: open the quick filter (with initial text)
 
@@ -488,6 +494,67 @@ class FileTableView(QTableView):
     def _reset_type_ahead(self) -> None:
         self._type_ahead = ""
 
+    # ------------------------------------------------------------------ TC-style marking
+
+    def _page_rows(self) -> int:
+        rh = max(1, self.verticalHeader().defaultSectionSize())
+        return max(1, self.viewport().height() // rh)
+
+    def _shift_navigate(self, key: int) -> None:
+        """Shift + cursor key (Total Commander): toggle the marks of the rows the
+        cursor passes over, then move it. Up/Down/PgUp/PgDn toggle the rows
+        left behind (the destination row stays as it is), Home/End include the
+        edge row because the cursor stops there."""
+        count = self.model().rowCount()
+        if count == 0:
+            return
+        row = max(0, self.currentIndex().row())
+        last = count - 1
+        if key == Qt.Key.Key_Down:
+            new = min(row + 1, last)
+            rows = range(row, max(new, row + 1))
+        elif key == Qt.Key.Key_Up:
+            new = max(row - 1, 0)
+            rows = range(min(new + 1, row), row + 1)
+        elif key == Qt.Key.Key_PageDown:
+            new = min(row + self._page_rows(), last)
+            rows = range(row, max(new, row + 1))
+        elif key == Qt.Key.Key_PageUp:
+            new = max(row - self._page_rows(), 0)
+            rows = range(min(new + 1, row), row + 1)
+        elif key == Qt.Key.Key_End:
+            new = last
+            rows = range(row, last + 1)
+        else:  # Home
+            new = 0
+            rows = range(0, row + 1)
+        self._emit_rows(self.toggle_rows, rows)
+        self.setCurrentIndex(self.model().index(new, 0))
+
+    def _emit_rows(self, signal, rows) -> None:
+        model = self.file_model()
+        entries = [e for e in (model.get_entry(r) for r in rows) if e is not None and not e.is_parent]
+        if entries:
+            signal.emit(entries)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        """Shift+click marks the range from the cursor to the clicked row,
+        Ctrl+click toggles the clicked row; both keep the click as a cursor move."""
+        mods = event.modifiers()
+        idx = self.indexAt(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton and idx.isValid():
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                anchor = max(0, self.currentIndex().row())
+                lo, hi = sorted((anchor, idx.row()))
+                self._emit_rows(self.mark_rows, range(lo, hi + 1))
+                self.setCurrentIndex(self.model().index(idx.row(), 0))
+                return
+            if mods & Qt.KeyboardModifier.ControlModifier:
+                self._emit_rows(self.toggle_rows, (idx.row(),))
+                self.setCurrentIndex(self.model().index(idx.row(), 0))
+                return
+        super().mousePressEvent(event)
+
     def _select_type_ahead_match(self) -> None:
         prefix = self._type_ahead
         if not prefix:
@@ -520,7 +587,8 @@ class FileTableView(QTableView):
             if entry:
                 self.entry_activated.emit(entry)
             return
-        if key == Qt.Key.Key_Space:
+        if key in (Qt.Key.Key_Space, Qt.Key.Key_Insert):
+            # Total Commander: toggle the item under the cursor and step down
             entry = self.current_entry()
             if entry:
                 self.space_pressed.emit(entry)
@@ -528,6 +596,9 @@ class FileTableView(QTableView):
                 next_idx = self.model().index(row + 1, 0)
                 if next_idx.isValid():
                     self.setCurrentIndex(next_idx)
+            return
+        if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) and key in _SHIFT_NAV_KEYS:
+            self._shift_navigate(key)
             return
         if key == Qt.Key.Key_Home:
             first = self.model().index(0, 0)

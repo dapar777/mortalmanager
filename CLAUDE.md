@@ -59,6 +59,14 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
 - **`database/`** — `DatabaseManager` nad SQLite v `%APPDATA%\MortalManager` (nastavení, záložky, oblíbené, FTP
   relace, historie příkazů a cest, historie operací, taby). **`settings/ConfigManager`** je singleton
   (`get_instance()`) s dataclassami `AppConfig` (mj. `theme`, `zoom`) / `PanelConfig`.
+- **`index/`** — index názvů souborů pro paletu, sdílený všemi instancemi: `file_index.py` (SQLite
+  `%APPDATA%\MortalManager\index.db`, WAL; tabulka `files` + FTS5 s **trigram** tokenizerem, takže `MATCH '"rep"'` je
+  indexový dotaz (**ne** `LIKE … ESCAPE` – ESCAPE optimalizaci vypne, 500 ms místo 5 ms na 1,2 M záznamů); generace `gen` pro čištění smazaných po plném skenu; `Excluder` = jména složek kdekoli + prefixy
+  cest) a `indexer.py` (vlákno; **vůdce = držitel Windows named mutexu** `Local\MortalManager.Indexer`, ostatní
+  instance jen čtou a zkoušejí to každých 30 s; plný sken po `rescan_hours`, živě přes `ReadDirectoryChangesW`
+  rekurzivně na každý kořen, přetečení bufferu = přeskan kořene). Bez Qt, testy v `tests/test_index.py`.
+  V GUI ho drží `gui/index_service.py` (start 3 s po oknu, čtecí spojení pro hledání, konfigurace z `AppConfig.index_*`,
+  dialog `dialogs/index_dialog.py`).
 - **`plugins/`** — `PluginManager(plugin_dir)` načítá `*.py` moduly; typy `ListerPlugin`, `ContentPlugin`, `PackerPlugin`.
 - **`solarqt/`** — vendorovaný designový systém z `c:\code\solarqt` (manuál `MANUAL.md` tam je závazný vzor;
   referenční aplikace `c:\code\task-master`). `theme.py` = **jediné místo s hex barvami** (Solarized tokeny
@@ -81,11 +89,14 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
   úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). Ctrl+S nebo `*` (hlavní klávesnice; numerická `*` zůstává výběr) = rychlý filtr jako v TC: pole pod seznamem,
   podřetězec nebo maska `*?`, Esc zruší, Enter vrátí fokus do seznamu s filtrem, šipky posouvají kurzor; filtr je
-  stav tabu (`_Tab.filter_text`), maže se při změně adresáře; `_unfiltered` drží plný výpis. F2 / Shift+F6 = přejmenování v místě
+  stav tabu (`_Tab.filter_text`), maže se při změně adresáře; `_unfiltered` drží plný výpis. Označování jako v TC: Insert/mezerník přepne a posune kurzor, Shift+šipky/PgUp/PgDn/Home/End přepnou přejeté řádky
+  (`FileTableView._shift_navigate` → signál `toggle_rows`), Shift+klik označí rozsah (`mark_rows`), Ctrl+klik přepne;
+  stav označení drží `_Tab.selection` (`SelectionManager`), model jen zobrazuje (`set_selected`). F2 / Shift+F6 = přejmenování v místě
   (`FileTableModel.setData` → `rename_requested` → `MainWindow._on_inline_rename` → job RENAME; delegát předvybere
   jméno bez přípony), Ctrl+M = hromadné.
-  Dlouhá menu jdou přes `panel.fit_menu_on_screen`, které při přetečení obrazovky přepne QSS property
-  `compact` ("true", pak "dense"), aby Qt nelámalo menu do dvou sloupců. Kontextové menu má nahoře sekci „Frequently used“:
+  Dlouhá menu jdou přes `panel.fit_menu_on_screen`, které při přetečení obrazovky zmenší svislý padding položek
+  jen o tolik, kolik je nutné (per-menu stylesheet), a až pak sáhne po QSS property `compact="dense"` (menší písmo),
+  aby Qt nelámalo menu do dvou sloupců. Kontextové menu má nahoře sekci „Frequently used“:
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
   settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
@@ -102,6 +113,14 @@ podúrovní zploštělé na „Sort by › Size › Descending“); cesty se ukl
 popisky oddělené `|`, takže **přejmenování popisku příkazu** starý záznam tiše zahodí.
 Hledání na kořenové úrovni prohledává i listy podúrovní (zploštělé, `_deep_entries`, hloubka 3), takže „name“
 najde „Sort by › Name › Ascending“.
+Dynamická úroveň = položka se `search` (callable(q) → seznam), např. „Find file on disk“ nad indexem; `extra_search`
+palety přidá na kořenové úrovni od 3 znaků pár souborů a příkazů z historie terminálu („Terminal history ›“ je
+i samostatná úroveň; spuštění jde přes `EmbeddedTerminalWidget.run_command`). Nalezený soubor otevře
+`PanelWidget.reveal(path)` (kurzor na souboru).
+Prefixy na kořenové úrovni (`parse_mode`): mezera = jen příkazy, `c ` historie terminálu (výběr příkaz jen předvyplní
+do řádky přes `EmbeddedTerminalWidget.prefill`), `a ` soubory i složky, `f ` soubory, `d ` složky. Dotaz interpretuje
+`index/pattern.py`: slova (podřetězce), maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); pro index se
+z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek ověří SQLite funkce REGEXP.
 
 ## Pravidla vzhledu (viz solarqt MANUAL.md)
 

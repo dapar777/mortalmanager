@@ -115,6 +115,23 @@ class EmbeddedTerminalWidget(QFrame):
     def clear_output(self) -> None:
         self._output.clear()
 
+    def run_command(self, cmd: str) -> None:
+        """Execute ``cmd`` as if typed."""
+        self._input.setText(cmd)
+        self._on_return()
+
+    def prefill(self, cmd: str) -> None:
+        """Put ``cmd`` into the command line (not executed) and focus it."""
+        self._input.setText(cmd)
+        self._input.setCursorPosition(len(cmd))
+        self._input.setFocus()
+
+    def history(self, limit: int = 60) -> list[str]:
+        try:
+            return self._db.get_command_history(self._cwd, shell="", limit=limit)
+        except Exception:
+            return []
+
     def retheme(self) -> None:
         """Fonts follow the zoom factor; colours are taken per line from the theme."""
         mono = theme.mono_font()

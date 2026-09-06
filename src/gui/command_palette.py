@@ -16,13 +16,30 @@ those commands first at the top level, sub-level leaves flattened into one
 item ("Sort by › Size › Descending"). Every run reports its path through
 ``on_run`` so the caller can persist the list.
 
+Dynamic levels: an entry with ``search`` (callable(query) -> list[dict])
+instead of static children is a search level – the list is produced from the
+typed text (file index). ``extra_search`` given to the palette adds a few such
+hits at the top level once the query is 3+ characters (files, terminal
+history), VS Code style. ``status`` (callable() -> str) is shown in the crumb.
+
+Prefix modes at the top level (Total Commander / VS Code style):
+    "␣text"  only application commands (no files, no terminal history)
+    "c text" only command-line history
+    "a text" files and folders from the index
+    "f text" files only
+    "d text" folders only
+Queries for files / terminal history may be a glob mask ("*.txt") or a regex
+(anything with regex metacharacters); see index/pattern.py.
+The palette gets ``mode_search(mode, query)`` for the last three; the mode
+is shown in the crumb.
+
 Rule for the app: every user-facing command lives in
 MainWindow._build_palette_commands – add new features there first.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -38,6 +55,20 @@ from src.solarqt import icons, theme
 ENTRY_ROLE = Qt.ItemDataRole.UserRole
 PATH_SEP = "|"
 RECENT_MAX = 8
+MODES = {"c": "terminal", "a": "all_entries", "f": "files", "d": "dirs"}
+MODE_LABELS = {"commands": "commands only", "terminal": "terminal history",
+               "all_entries": "files & folders", "files": "files", "dirs": "folders"}
+MODE_HINT = "␣ commands   c␣ terminal   a␣ files+folders   f␣ files   d␣ folders   ·   *? mask, regex ok"
+INDEX_MODES = ("all_entries", "files", "dirs")
+
+
+def parse_mode(text: str) -> tuple[str, str]:
+    """(mode, query) from the raw search text; mode "all" when no prefix."""
+    if text.startswith(" "):
+        return "commands", text.strip()
+    if len(text) >= 2 and text[1] == " " and text[0].lower() in MODES:
+        return MODES[text[0].lower()], text[2:].strip()
+    return "all", text.strip()
 
 
 def _children_of(entry: dict) -> list[dict]:
@@ -49,13 +80,22 @@ def _children_of(entry: dict) -> list[dict]:
 
 class CommandPalette(QDialog):
     def __init__(self, entries: list[dict], parent=None, title: str = "Commands",
-                 recent: list[str] | None = None, on_run=None) -> None:
+                 recent: list[str] | None = None, on_run=None, extra_search=None, mode_search=None) -> None:
         super().__init__(parent)
         for e in entries:
             e.setdefault("_path", [e["label"]])
         self._root = entries
         self._recent = list(recent or [])
         self._on_run = on_run
+        self._extra_search = extra_search
+        self._mode_search = mode_search
+        self._mode = "all"
+        self._pattern_note = ""
+        self._search_fn = None                       # search callable of the current dynamic level
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(120)
+        self._search_timer.timeout.connect(lambda: self._filter(self.search.text()))
         self._stack: list[tuple[list[dict], str]] = []   # (entries, breadcrumb title) of parent levels
         self._deep: list[dict] | None = None             # flattened sub-level leaves, built on first search
         self._entries = self._with_recent(entries)
@@ -70,9 +110,10 @@ class CommandPalette(QDialog):
         self.search.setObjectName("search")
         self.search.setClearButtonEnabled(True)
         self.list = QListWidget()
+        self.list.setObjectName("paletteList")
         self.list.setUniformItemSizes(True)
         self.list.setIconSize(icons.qsize(12))
-        hint = QLabel("↑↓ move   Enter run / open   Backspace back   Esc close")
+        hint = QLabel(f"{MODE_HINT}      ·      ↑↓ move   Enter run   Backspace back   Esc close")
         hint.setObjectName("caption")
         hint.setAlignment(Qt.AlignmentFlag.AlignRight)
 
@@ -87,7 +128,7 @@ class CommandPalette(QDialog):
         layout.addWidget(self.list, 1)
         layout.addWidget(hint)
 
-        self.search.textChanged.connect(self._filter)
+        self.search.textChanged.connect(self._on_text)
         self.list.itemActivated.connect(lambda _: self._run_current())
         self.search.installEventFilter(self)
 
@@ -98,11 +139,16 @@ class CommandPalette(QDialog):
 
     def _enter_level(self, entry: dict | None) -> None:
         if entry is not None:
-            children = _children_of(entry)
-            for c in children:
-                c["_path"] = [*entry["_path"], c["label"]]
             self._stack.append((self._entries, entry["label"]))
-            self._entries = children
+            if callable(entry.get("search")):
+                self._search_fn = entry["search"]
+                self._status_fn = entry.get("status")
+                self._entries = []
+            else:
+                children = _children_of(entry)
+                for c in children:
+                    c["_path"] = [*entry["_path"], c["label"]]
+                self._entries = children
         self._refresh_level()
 
     # ------------------------------------------------------------------ recently used
@@ -113,7 +159,7 @@ class CommandPalette(QDialog):
         entry = None
         for i, label in enumerate(path):
             entry = next((e for e in level if e["label"] == label), None)
-            if entry is None:
+            if entry is None or callable(entry.get("search")):
                 return None
             if i < len(path) - 1:
                 level = _children_of(entry)
@@ -144,24 +190,68 @@ class CommandPalette(QDialog):
         return recent + rest
 
     def _crumb_text(self) -> str:
-        return "  ›  ".join([self._title, *(label for _, label in self._stack)])
+        text = "  ›  ".join([self._title, *(label for _, label in self._stack)])
+        if not self._stack and self._mode != "all":
+            text += f"      [{MODE_LABELS.get(self._mode, self._mode)}{self._pattern_note}]"
+        status = getattr(self, "_status_fn", None)
+        if self._search_fn is not None and callable(status):
+            try:
+                text += f"      {status()}"
+            except Exception:
+                pass
+        return text
 
     def _refresh_level(self) -> None:
         self.crumb.setText(self._crumb_text())
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
-        self.search.setPlaceholderText("Type a command…" if not self._stack else f"{self._stack[-1][1]} …")
+        if self._search_fn is not None:
+            self.search.setPlaceholderText(f"{self._stack[-1][1]}: type a name…")
+        else:
+            self.search.setPlaceholderText("Type a command…" if not self._stack else f"{self._stack[-1][1]} …")
         self._filter("")
 
     def _go_back(self) -> bool:
         if not self._stack:
             return False
         self._entries, _ = self._stack.pop()
+        self._search_fn = None
+        self._status_fn = None
         if not self._stack:
             self._entries = self._with_recent(self._root)
         self._refresh_level()
         return True
+
+    def _on_text(self, text: str) -> None:
+        # dynamic / extra searches hit the index: debounce them, static levels filter instantly
+        mode, q = parse_mode(text) if not self._stack else ("all", text.strip())
+        if self._search_fn is not None or mode in (*INDEX_MODES, "terminal") or (
+                mode == "all" and callable(self._extra_search) and not self._stack and len(q) >= 3):
+            self._search_timer.start()
+        else:
+            self._filter(text)
+
+    def _fill_mode(self, mode: str, q: str) -> None:
+        """Prefix mode: the list is produced by mode_search only."""
+        entries = []
+        if callable(self._mode_search) and (q or mode == "terminal"):
+            try:
+                entries = self._mode_search(mode, q) or []
+            except Exception:
+                entries = []
+        for e in entries:
+            e["_dynamic"] = True
+            e.setdefault("_path", [e.get("category", ""), e["label"]])
+            it = QListWidgetItem(f"{e.get('category', '')}  ·  {e['label']}")
+            if e.get("icon"):
+                it.setIcon(icons.icon(e["icon"], 12))
+            if e.get("tooltip"):
+                it.setToolTip(e["tooltip"])
+            it.setData(ENTRY_ROLE, e)
+            self.list.addItem(it)
+        if self.list.count():
+            self.list.setCurrentRow(0)
 
     # ------------------------------------------------------------------ deep search
 
@@ -185,7 +275,7 @@ class CommandPalette(QDialog):
                     out.append({**c, "label": "  ›  ".join(c["_path"]), "category": category, "_deep": True})
 
         for root in self._root:
-            if root.get("children") is not None:
+            if root.get("children") is not None and not callable(root.get("search")):
                 walk(root, 1, root.get("category", ""))
         self._deep = out
         return out
@@ -200,19 +290,37 @@ class CommandPalette(QDialog):
         return all(tok in hay for tok in q.split())
 
     def _filter(self, q: str) -> None:
-        q = q.strip().lower()
+        mode, q = parse_mode(q) if not self._stack else ("all", q.strip())
+        q = q.lower()
+        note = ""
+        if mode in (*INDEX_MODES, "terminal") and q:
+            from src.index.pattern import parse
+            lab = parse(q).label
+            note = f" · {lab}" if lab else ""
+        if mode != self._mode or note != self._pattern_note:
+            self._mode, self._pattern_note = mode, note
+            self.crumb.setText(self._crumb_text())
         self.list.clear()
-        candidates = list(self._entries)
-        if q and not self._stack:
-            shown = {PATH_SEP.join(e.get("_path", [e["label"]])) for e in candidates}
-            candidates += [d for d in self._deep_entries() if PATH_SEP.join(d["_path"]) not in shown]
+        if not self._stack and mode in (*INDEX_MODES, "terminal"):
+            self._fill_mode(mode, q)
+            return
+        if self._search_fn is not None:
+            candidates = self._search_fn(q) if len(q) >= 2 else []
+            for c in candidates:
+                c.setdefault("_path", [*(label for _, label in self._stack), c["label"]])
+                c["_dynamic"] = True
+        else:
+            candidates = list(self._entries)
+            if q and not self._stack:
+                shown = {PATH_SEP.join(e.get("_path", [e["label"]])) for e in candidates}
+                candidates += [d for d in self._deep_entries() if PATH_SEP.join(d["_path"]) not in shown]
         for e in candidates:
-            if not self._matches(e, q):
+            if not e.get("_dynamic") and not self._matches(e, q):
                 continue
             label = e["label"]
             if e.get("category"):
                 label = f"{e['category']}  ·  {label}"
-            if e.get("children") is not None:
+            if e.get("children") is not None or callable(e.get("search")):
                 label += "  ›"
             it = QListWidgetItem(label)
             if e.get("_recent"):
@@ -232,6 +340,21 @@ class CommandPalette(QDialog):
             it.setText(label + suffix)
             it.setData(ENTRY_ROLE, e)
             self.list.addItem(it)
+        if q and not self._stack and mode == "all" and callable(self._extra_search) and len(q) >= 3:
+            try:
+                extra = self._extra_search(q)
+            except Exception:
+                extra = []
+            for e in extra:
+                e["_dynamic"] = True
+                e.setdefault("_path", [e.get("category", ""), e["label"]])
+                it = QListWidgetItem(f"{e.get('category', '')}  ·  {e['label']}")
+                if e.get("icon"):
+                    it.setIcon(icons.icon(e["icon"], 12))
+                if e.get("tooltip"):
+                    it.setToolTip(e["tooltip"])
+                it.setData(ENTRY_ROLE, e)
+                self.list.addItem(it)
         if self.list.count():
             self.list.setCurrentRow(0)
 
@@ -240,11 +363,11 @@ class CommandPalette(QDialog):
         if item is None:
             return
         entry = item.data(ENTRY_ROLE)
-        if entry.get("children") is not None:
+        if entry.get("children") is not None or callable(entry.get("search")):
             self._enter_level(entry)
             return
         self.accept()
-        if callable(self._on_run):
+        if callable(self._on_run) and not entry.get("_dynamic"):
             try:
                 self._on_run(PATH_SEP.join(entry.get("_path", [entry["label"]])))
             except Exception:
