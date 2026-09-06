@@ -137,6 +137,9 @@ class MainWindow(QMainWindow):
         from .terminal_widget import EmbeddedTerminalWidget
         self._terminal = EmbeddedTerminalWidget(home, self._cfg._db, self)
         self._terminal.cwd_changed.connect(lambda path: self._active_panel_widget.navigate_to(path))
+        self._terminal.set_context_provider(self._terminal_context)
+        for panel in (self._left_panel, self._right_panel):
+            panel.cmdline_insert.connect(self._insert_into_terminal)
         self._terminal.height_step.connect(self._terminal_height_step)
         self._terminal.setVisible(self._cfg.config.command_bar_visible)
         self._terminal_base_sizes: list[int] | None = None   # splitter sizes before Alt+± (None = untouched)
@@ -374,6 +377,8 @@ class MainWindow(QMainWindow):
             ("F8",          self._delete_files),
             ("Delete",      self._delete_files),
             ("Alt+F7",      self._open_search),
+            ("Alt+F1",      lambda: self._show_drive_menu("left")),
+            ("Alt+F2",      lambda: self._show_drive_menu("right")),
             ("Ctrl+M",      self._bulk_rename),
             ("Shift+F6",    self._rename_inline),
             ("Ctrl+R",      lambda: self._active_panel_widget.refresh()),
@@ -571,6 +576,30 @@ class MainWindow(QMainWindow):
         self._active_panel_widget.navigate_to(root)
         self._active_panel_widget.give_focus()
 
+    def _show_drive_menu(self, side: str) -> None:
+        """Alt+F1 / Alt+F2 (Total Commander): drive list above the left / right
+        panel; picking one makes that panel active and goes to the drive root."""
+        from PySide6.QtWidgets import QMenu
+        from .panel import fit_menu_on_screen
+        panel = self._left_panel if side == "left" else self._right_panel
+        drives = self._drive_bar.drives()
+        if not drives:
+            Toast.show_message(self, "Drive list is still loading", "info")
+            return
+        menu = QMenu(self)
+        cur = self._drive_bar.drive_for(panel.current_path)
+        for d in drives:
+            act = menu.addAction(icons.icon("drive"), f"{d.letter}:   {d.label or d.drive_type.title()}   ·   {d.free_display} free")
+            act.setData(d.root)
+            if cur is not None and d.root == cur.root:
+                act.setCheckable(True)
+                act.setChecked(True)
+        chosen = fit_menu_on_screen(menu, panel.mapToGlobal(panel.rect().topLeft()))
+        if chosen is not None:
+            self._set_active(side)
+            panel.navigate_to(chosen.data())
+            panel.give_focus()
+
     _PALETTE_RECENT_KEY = "palette_recent"
 
     def _open_command_palette(self) -> None:
@@ -632,6 +661,46 @@ class MainWindow(QMainWindow):
                 if len(out) >= 10:
                     break
         return out
+
+    def _terminal_context(self):
+        """Panel state for the terminal placeholders %N %P %T %S %R (core.cmdline)."""
+        from src.core.cmdline import CmdContext
+        p = self._active_panel_widget
+        cur = p.current_entry()
+        sel = p.selected_entries()
+        return CmdContext(
+            cursor_name=cur.name if cur and not cur.is_parent else "",
+            panel_path=p.current_path,
+            other_path=self._inactive_panel_widget.current_path,
+            selected_names=[e.name for e in sel],
+            selected_paths=[e.full_path for e in sel],
+        )
+
+    def _insert_into_terminal(self, text: str) -> None:
+        """Ctrl+Enter / Ctrl+Shift+Enter in a panel: file name / path into the command line."""
+        if not self._terminal.isVisible():
+            self._act_cmdbar.setChecked(True)
+            self._toggle_cmdbar()
+        self._terminal.insert_text(text)
+
+    def _insert_cursor_into_terminal(self, full: bool) -> None:
+        cur = self._active_panel_widget.current_entry()
+        if cur and not cur.is_parent:
+            self._insert_into_terminal(cur.full_path if full else cur.name)
+
+    def _show_placeholder_help(self) -> None:
+        QMessageBox.information(self, "Terminal placeholders",
+            "%N   file under the cursor\n%P   active panel folder\n%T   other panel folder\n"
+            "%S   selected entries (names)\n%R   selected entries (full paths)\n"
+            "%SI  run the command once per selected entry (name)\n"
+            "%RI  run the command once per selected entry (full path)\n%%   literal %\n\n"
+            "Ctrl+Enter inserts the file name, Ctrl+Shift+Enter the full path into the command line.")
+
+    def _kill_terminal_session(self) -> None:
+        if self._terminal.session_active():
+            self._terminal.stop_session()
+        else:
+            Toast.show_message(self, "No interactive program is running in the terminal", "info")
 
     def _prefill_terminal(self, cmd: str) -> None:
         """Palette pick from the terminal history: put it into the command line
@@ -698,8 +767,8 @@ class MainWindow(QMainWindow):
         def drive_children() -> list[dict]:
             cur = self._drive_bar.drive_for(p.current_path)
             return [
-                e("Drive", f"{d.letter}:  {d.label or d.drive_type.title()}  ·  {d.free_display} free",
-                  lambda root=d.root: self._on_drive_clicked(root), icon="drive",
+                e("Navigate", f"Go to drive {d.letter}:", lambda root=d.root: self._on_drive_clicked(root),
+                  f"{d.label or d.drive_type.title()}  ·  {d.free_display} free", icon="drive",
                   checked=(cur is not None and d.root == cur.root))
                 for d in self._drive_bar.drives()
             ]
@@ -772,7 +841,10 @@ class MainWindow(QMainWindow):
             e("Mark", "Copy full paths to clipboard", self._copy_paths, "Ctrl+Alt+C", icon="clipboard"),
             # navigate
             e("Navigate", "Sort by", children=sort_children, icon="sort"),
-            e("Navigate", "Go to drive", children=drive_children, icon="drive"),
+            # one plain command per drive ("Go to drive C:"), like Total Commander's drive buttons
+            *drive_children(),
+            e("Navigate", "Drive menu for left panel", lambda: self._show_drive_menu("left"), "Alt+F1", icon="drive"),
+            e("Navigate", "Drive menu for right panel", lambda: self._show_drive_menu("right"), "Alt+F2", icon="drive"),
             e("Navigate", "Switch tab", children=tab_children, icon="columns"),
             e("Navigate", "Favourites", children=favorite_children, icon="star_outline"),
             e("Navigate", "History", children=history_children, shortcut="Alt+Down", icon="clock"),
@@ -810,6 +882,13 @@ class MainWindow(QMainWindow):
             e("Tools", "Open terminal here", self._open_terminal, icon="terminal"),
             e("Tools", "Focus embedded terminal", self._focus_cmdline, "Ctrl+Down", icon="terminal"),
             e("Tools", "Clear embedded terminal", self._terminal.clear_output, self._cfg.config.cmd_expand_shortcut),
+            e("Tools", "Kill interactive terminal program", self._kill_terminal_session, "Ctrl+C in terminal",
+              icon="terminal"),
+            e("Tools", "Insert file name into command line", lambda: self._insert_cursor_into_terminal(False),
+              "Ctrl+Enter", icon="terminal"),
+            e("Tools", "Insert full path into command line", lambda: self._insert_cursor_into_terminal(True),
+              "Ctrl+Shift+Enter", icon="terminal"),
+            e("Tools", "Terminal placeholders (%N %P %T %S %R %SI %RI)", self._show_placeholder_help, icon="info"),
             e("Tools", "Terminal shell", children=shell_children, icon="terminal"),
             e("Tools", "Open as administrator", self._relaunch_admin, icon="shield"),
             e("Tools", "FTP / SFTP connect…", self._open_ftp, icon="network"),
@@ -1238,5 +1317,6 @@ class MainWindow(QMainWindow):
         cfg.zoom = theme.zoom()
         self._cfg.save()
         self._index.stop()
+        self._terminal.shutdown()
         self._job_queue.deleteLater()
         event.accept()

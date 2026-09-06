@@ -37,8 +37,10 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Rychlý filtr seznamu (jako v TC) | Ctrl+S nebo `*`, Esc zruší, Enter zpět do seznamu |
 | Kontextové menu | pravé tlačítko; nahoře sekce nejčastěji používaných položek |
 | Cesta / oblíbené / nový tab | Ctrl+L / Ctrl+D / Ctrl+T |
+| Přepnutí disku | lišta disků v hlavičce, Alt+F1 / Alt+F2 = menu disků pro levý / pravý panel, paleta „Go to drive C:“, v terminálu `d:` nebo `cd /d D:\cesta` (panel jde s ním) |
 | Editor | F4 = externí editor (výchozí `code`, nastavení *Commands → External Editor…*, `{file}` = místo pro cesty; prázdné = vestavěný), *Files → Edit in Built-in Editor* |
-| Terminál | Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat, Alt++ / Alt+− dočasně zvětší / zmenší výstup (vrátí se při odchodu fokusu z terminálu) |
+| Soubory z panelu v příkazové řádce | Ctrl+Enter vloží jméno, Ctrl+Shift+Enter celou cestu; zástupné znaky `%N` (pod kurzorem), `%P` / `%T` (složka aktivního / druhého panelu), `%S` / `%R` (označené: jména / celé cesty), `%SI` / `%RI` (příkaz se spustí pro každou označenou položku zvlášť), `%%`; platí i pro řádky posílané do interaktivního `python` / `node`, tam bez uvozovek (`print('%SI')`) |
+| Terminál | Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat, `python` / `node` běží interaktivně (řádky jdou do něj, Ctrl+D konec, Ctrl+C kill), `cmd` / `powershell` / `vim` / `ssh` se otevřou v novém okně, Alt++ / Alt+− dočasně zvětší / zmenší výstup (vrátí se při odchodu fokusu z terminálu) |
 
 Barvy v kódu: pouze v `src/solarqt/theme.py` (`tests/test_theme.py` to hlídá). Stav git/svn se ukazuje jako
 sémantická tečka na ikoně (žlutá = změněno, modrá = nesledováno, zelená = přidáno, červená = smazáno/konflikt).

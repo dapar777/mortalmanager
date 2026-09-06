@@ -66,7 +66,7 @@ def _com_init(pythoncom) -> None:
     _com_ready = True
 
 
-def fit_menu_on_screen(menu, global_pos) -> None:
+def fit_menu_on_screen(menu, global_pos):
     """Show ``menu`` at ``global_pos``. If its natural height exceeds the
     screen, reduce the vertical item padding just enough to fit (6 px → 0 px,
     per-menu stylesheet); only if that is still too tall switch to the dense
@@ -92,7 +92,7 @@ def fit_menu_on_screen(menu, global_pos) -> None:
             if _natural_height(menu) > avail:
                 menu.setProperty("compact", "dense")
                 widgets.repolish(menu)
-    menu.exec(global_pos)
+    return menu.exec(global_pos)
 
 
 def _natural_height(menu) -> int:
@@ -229,6 +229,7 @@ class PanelWidget(QFrame):
 
     path_changed = Signal(str)           # new path
     entry_activated = Signal(object)     # FileEntry – file (directories are handled here)
+    cmdline_insert = Signal(str)         # Ctrl+Enter / Ctrl+Shift+Enter on an entry → terminal command line
     status_info = Signal(str)            # status bar text
     request_focus = Signal()             # panel wants keyboard focus
     favorites_requested = Signal()       # star button
@@ -328,6 +329,7 @@ class PanelWidget(QFrame):
         # File table
         self._table = FileTableView(self)
         self._table.entry_activated.connect(self._on_entry_activated)
+        self._table.cmdline_insert.connect(self.cmdline_insert)
         self._table.space_pressed.connect(self._toggle_selection)
         self._table.toggle_rows.connect(self._toggle_entries)
         self._table.mark_rows.connect(self._mark_entries)

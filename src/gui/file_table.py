@@ -390,6 +390,7 @@ class FileTableView(QTableView):
     entry_activated = Signal(object)   # FileEntry
     space_pressed = Signal(object)     # FileEntry – toggle selection (Space / Insert)
     toggle_rows = Signal(list)         # [FileEntry] – toggle each (Shift+cursor keys, Ctrl+click)
+    cmdline_insert = Signal(str)       # Ctrl+Enter = name, Ctrl+Shift+Enter = full path → terminal line
     mark_rows = Signal(list)           # [FileEntry] – select each (Shift+click range)
     sort_requested = Signal(object)    # SortField (header click)
     filter_requested = Signal(str)     # '*' typed: open the quick filter (with initial text)
@@ -584,6 +585,12 @@ class FileTableView(QTableView):
             return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             entry = self.current_entry()
+            if entry and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                # Total Commander: Ctrl+Enter puts the name, Ctrl+Shift+Enter the full path into the command line
+                if not entry.is_parent:
+                    shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+                    self.cmdline_insert.emit(entry.full_path if shift else entry.name)
+                return
             if entry:
                 self.entry_activated.emit(entry)
             return

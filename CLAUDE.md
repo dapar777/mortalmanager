@@ -78,7 +78,15 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   každém widgetu, který drží barvu/velikost mimo QSS (IconButton, tabulka, panel, terminál…).
 - **`gui/`** — `MainWindow`: `#headerBar` (logo z `assets/icons`, název, `DriveBar` – disky enumeruje worker
   v `QThreadPool`, „Search“, „Commands“, přepínač tématu) · splitter dvou `PanelWidget` + `#fkeysBar` ·
-  `EmbeddedTerminalWidget` (Alt++ / Alt+− v řádce = signál `height_step`, `MainWindow._terminal_height_step`
+  `EmbeddedTerminalWidget` (příkazy běží po jednom se zachyceným výstupem, timeout 30 s; zástupné znaky
+  `%N %P %T %S %R %SI %RI` rozbaluje čistý `core/cmdline.py` (`expand` → seznam příkazů, `%SI`/`%RI` = jeden
+  na označenou položku, terminál je pouští za sebou přes `_queue`) z `CmdContext`, který dodává
+  `MainWindow._terminal_context`; Ctrl+Enter / Ctrl+Shift+Enter v tabulce = signál `cmdline_insert` → `insert_text`; v REPL sezení se
+  rozbalují bez uvozovek (`quoted=False`, `has_placeholders(strict=True)` ignoruje samotné `%%`) a `%SI`/`%RI`
+  pošlou řádek za každou položku; samotné `d:` = přepnutí disku, `cd /d` se toleruje; `terminal_session.py`:
+  `classify` pozná REPL (`python`, `py`, `node` bez skriptu → `ReplSession`, trvalý proces s rourami, `-i -q`,
+  prompty `>>> `/`... ` se odloupnou do popisku řádky, Ctrl+D = EOF, Ctrl+C = kill, `shutdown()` při zavření okna)
+  a konzolové programy (`cmd`, `powershell`, `vim`, `ssh`… → nové konzolové okno); Alt++ / Alt+− v řádce = signál `height_step`, `MainWindow._terminal_height_step`
   dočasně přenastaví `_v_splitter`, `_on_focus_changed` přes `QApplication.focusChanged` vrátí původní výšku, jakmile
   fokus opustí terminál) · stavový řádek (info aktivního panelu, zoom %, volné místo). Zoom: Ctrl+kolečko
   (globální event filter), Ctrl+±, Ctrl+0; `_zoom_step` je **throttlovaný** – první notch se aplikuje hned,
@@ -98,7 +106,8 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   stav označení drží `_Tab.selection` (`SelectionManager`), model jen zobrazuje (`set_selected`). F2 / Shift+F6 = přejmenování v místě
   (`FileTableModel.setData` → `rename_requested` → `MainWindow._on_inline_rename` → job RENAME; delegát předvybere
   jméno bez přípony), Ctrl+M = hromadné.
-  Dlouhá menu jdou přes `panel.fit_menu_on_screen`, které při přetečení obrazovky zmenší svislý padding položek
+  Alt+F1 / Alt+F2 = `MainWindow._show_drive_menu(side)` (menu disků nad panelem, výběr panel aktivuje).
+  Dlouhá menu jdou přes `panel.fit_menu_on_screen` (vrací zvolenou akci), které při přetečení obrazovky zmenší svislý padding položek
   jen o tolik, kolik je nutné (per-menu stylesheet), a až pak sáhne po QSS property `compact="dense"` (menší písmo),
   aby Qt nelámalo menu do dvou sloupců. Kontextové menu má nahoře sekci „Frequently used“:
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
@@ -113,8 +122,8 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
 
 `MainWindow._build_palette_commands` je **první místo**, kam patří každá nová uživatelská funkce (kategorie, popisek,
 zkratka, `run`); menu a F-lišta jsou jen podmnožiny. Položka s `children` (seznam nebo callable) otevře další úroveň
-jako ve VS Code (Sort by › Size › Descending, Go to drive › C:, Switch tab, Favourites, History, Theme, Zoom,
-Terminal shell); `checked=True` označí aktuální stav. Nová funkce bez záznamu v paletě = nedokončená. Paleta ukazuje nahoře naposledy použité příkazy (i listy
+jako ve VS Code (Sort by › Size › Descending, Switch tab, Favourites, History, Theme, Zoom,
+Terminal shell); `checked=True` označí aktuální stav; disky jsou naopak ploché příkazy „Go to drive C:“ (label stálý, popis disku ve sloupci zkratky). Nová funkce bez záznamu v paletě = nedokončená. Paleta ukazuje nahoře naposledy použité příkazy (i listy
 podúrovní zploštělé na „Sort by › Size › Descending“); cesty se ukládají do DB settings `palette_recent`, klíč =
 popisky oddělené `|`, takže **přejmenování popisku příkazu** starý záznam tiše zahodí.
 Hledání na kořenové úrovni prohledává i listy podúrovní (zploštělé, `_deep_entries`, hloubka 3), takže „name“
