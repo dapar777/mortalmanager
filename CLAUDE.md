@@ -13,6 +13,8 @@ editor F4, vestavěný terminál, command palette, VCS badge u souborů) je funk
 
 Aplikace se spouští jako modul z kořene repa (`src/main.py` si sám přidá kořen do `sys.path`). Na stroji autora
 je venv v `C:\mm_venv` (Python 3.12, PySide6, pytest); `restart.bat` zabije běžící instanci a spustí novou z tohoto venvu.
+`pyproject.toml` původně vyžadoval Python 3.13 a měl neexistující build backend; opraveno na `>=3.12` a
+`setuptools.build_meta` (ruff/mypy cílí dál na 3.13).
 
 ```bash
 python -m src.main                                  # spustit aplikaci
