@@ -22,7 +22,8 @@ nejsou (`pip install -e .[dev]` je doplní); jejich konfigurace cílí na Python
 ```bash
 python -m src.main                                  # spustit aplikaci
 restart.bat                                         # restart běžící instance (C:\mm_venv)
-python -m pytest -q                                 # testy (69, běží ~3 s, headless Qt přes offscreen)
+start.bat                                           # další instance vedle běžících (nic nezabíjí)
+python -m pytest -q                                 # testy (79, běží ~4 s, headless Qt přes offscreen)
 python -m pytest -q tests/test_theme.py             # vzhled: hex jen v theme.py, zoom, ikony, barvy tabulky
 python -m pytest -q tests/test_core.py::test_format_size_kb   # jeden test
 python -m ruff check src tests                      # lint
@@ -62,7 +63,8 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
 - **`index/`** — index názvů souborů pro paletu, sdílený všemi instancemi: `file_index.py` (SQLite
   `%APPDATA%\MortalManager\index.db`, WAL; tabulka `files` + FTS5 s **trigram** tokenizerem, takže `MATCH '"rep"'` je
   indexový dotaz (**ne** `LIKE … ESCAPE` – ESCAPE optimalizaci vypne, 500 ms místo 5 ms na 1,2 M záznamů); generace `gen` pro čištění smazaných po plném skenu; `Excluder` = jména složek kdekoli + prefixy
-  cest) a `indexer.py` (vlákno; **vůdce = držitel Windows named mutexu** `Local\MortalManager.Indexer`, ostatní
+  cest; `is_network_path` vyřadí síťové disky a UNC z kořenů i když jsou v nastavení, cloudové složky na FIXED disku
+  zůstávají) a `indexer.py` (vlákno; **vůdce = držitel Windows named mutexu** `Local\MortalManager.Indexer`, ostatní
   instance jen čtou a zkoušejí to každých 30 s; plný sken po `rescan_hours`, živě přes `ReadDirectoryChangesW`
   rekurzivně na každý kořen, přetečení bufferu = přeskan kořene). Bez Qt, testy v `tests/test_index.py`.
   V GUI ho drží `gui/index_service.py` (start 3 s po oknu, čtecí spojení pro hledání, konfigurace z `AppConfig.index_*`,
@@ -76,7 +78,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   každém widgetu, který drží barvu/velikost mimo QSS (IconButton, tabulka, panel, terminál…).
 - **`gui/`** — `MainWindow`: `#headerBar` (logo z `assets/icons`, název, `DriveBar` – disky enumeruje worker
   v `QThreadPool`, „Search“, „Commands“, přepínač tématu) · splitter dvou `PanelWidget` + `#fkeysBar` ·
-  `EmbeddedTerminalWidget` · stavový řádek (info aktivního panelu, zoom %, volné místo). Zoom: Ctrl+kolečko
+  `EmbeddedTerminalWidget` (Alt++ / Alt+− v řádce = signál `height_step`, `MainWindow._terminal_height_step`
+  dočasně přenastaví `_v_splitter`, `_on_focus_changed` přes `QApplication.focusChanged` vrátí původní výšku, jakmile
+  fokus opustí terminál) · stavový řádek (info aktivního panelu, zoom %, volné místo). Zoom: Ctrl+kolečko
   (globální event filter), Ctrl+±, Ctrl+0; `_zoom_step` je **throttlovaný** – první notch se aplikuje hned,
   další se během 220 ms slučují, protože `theme.apply` + repolish celého okna stojí 150–300 ms. Zoom i téma se
   persistují do configu. Pod `theme.HEADER_COMPACT_BELOW` (1100 px × zoom) se schovají texty v hlavičce a v F-liště.
@@ -100,7 +104,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
   settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
-- **`viewer/`, `editor/`** — samostatná okna pro F3/F4; mono písmo `theme.mono_font()`, zvýraznění syntaxe
+- **`viewer/`, `editor/`** — samostatná okna pro F3/F4; F4 nejdřív zkusí externí editor (`AppConfig.external_editor`,
+  výchozí `code`; `editor/external.py`: tokenizace s uvozovkami, `{file}` = cesty, `code` → `Code.exe` místo
+  `code.cmd`, nenalezený program = Toast + vestavěný editor; dialog `dialogs/editor_dialog.py`); mono písmo `theme.mono_font()`, zvýraznění syntaxe
   ze Solarized konstant (`theme.GREEN` klíčová slova, `CYAN` řetězce, `MAGENTA` čísla).
 
 ## Paleta příkazů = registr všech funkcí

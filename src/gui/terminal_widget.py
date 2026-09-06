@@ -83,6 +83,9 @@ class EmbeddedTerminalWidget(QFrame):
 
     # Emitted when the user `cd`s to a new directory so panels can follow.
     cwd_changed = Signal(str)
+    # Alt++ / Alt+- in the command line: grow / shrink the pane (+1 / -1 step);
+    # the owner resizes the splitter and reverts when focus leaves the pane.
+    height_step = Signal(int)
 
     def __init__(
         self,
@@ -179,7 +182,8 @@ class EmbeddedTerminalWidget(QFrame):
 
         self._input = QLineEdit()
         self._input.setObjectName("terminalInput")
-        self._input.setPlaceholderText("command…   ↑↓ history   Tab complete   Ctrl+Up back to panel")
+        self._input.setPlaceholderText(
+            "command…   ↑↓ history   Tab complete   Alt+± pane height   Ctrl+Up back to panel")
         self._input.returnPressed.connect(self._on_return)
         self._input.installEventFilter(self)
 
@@ -281,6 +285,14 @@ class EmbeddedTerminalWidget(QFrame):
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         if obj is self._input and event.type() == QEvent.Type.KeyPress:
             key = event.key()
+            if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                # '+' is unshifted on Czech layouts and Shift+'=' on US ones
+                if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) or event.text() == "+":
+                    self.height_step.emit(+1)
+                    return True
+                if key == Qt.Key.Key_Minus or event.text() == "-":
+                    self.height_step.emit(-1)
+                    return True
             if key == Qt.Key.Key_Up:
                 self._hist_step(+1)
                 return True

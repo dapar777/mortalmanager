@@ -137,7 +137,10 @@ class MainWindow(QMainWindow):
         from .terminal_widget import EmbeddedTerminalWidget
         self._terminal = EmbeddedTerminalWidget(home, self._cfg._db, self)
         self._terminal.cwd_changed.connect(lambda path: self._active_panel_widget.navigate_to(path))
+        self._terminal.height_step.connect(self._terminal_height_step)
         self._terminal.setVisible(self._cfg.config.command_bar_visible)
+        self._terminal_base_sizes: list[int] | None = None   # splitter sizes before Alt+± (None = untouched)
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
 
         self._v_splitter = QSplitter(Qt.Orientation.Vertical)
         self._v_splitter.addWidget(panels_container)
@@ -293,6 +296,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(icons.icon("folder_plus"), "New &Folder\tF7", self._mkdir)
         file_menu.addAction(icons.icon("rename"), "&Rename\tF2", self._rename_inline)
         file_menu.addSeparator()
+        file_menu.addAction(icons.icon("edit"), "&Edit\tF4", self._edit_file)
+        file_menu.addAction(icons.icon("edit"), "Edit in &Built-in Editor", self._edit_builtin)
+        file_menu.addSeparator()
         file_menu.addAction(icons.icon("star_outline"), "&Favorites\tCtrl+D", self._open_favorites)
         file_menu.addSeparator()
         file_menu.addAction(icons.icon("info"), "&Properties\tAlt+Enter", self._show_properties)
@@ -314,6 +320,7 @@ class MainWindow(QMainWindow):
         cmd_menu.addAction(icons.icon("search"), "&Search…\tAlt+F7", self._open_search)
         cmd_menu.addAction(icons.icon("filter"), "&Quick Filter\tCtrl+S", lambda: self._active_panel_widget.show_filter())
         cmd_menu.addAction(icons.icon("settings"), "File &Index Settings…", self._open_index_settings)
+        cmd_menu.addAction(icons.icon("settings"), "External &Editor…", self._open_editor_settings)
         cmd_menu.addAction(icons.icon("rename"), "Bulk &Rename…\tCtrl+M", self._bulk_rename)
         cmd_menu.addSeparator()
         cmd_menu.addAction(icons.icon("scale"), "Calculate Si&ze", self._calc_size)
@@ -514,6 +521,44 @@ class MainWindow(QMainWindow):
     def _focus_cmdline(self) -> None:
         self._terminal.give_focus()
 
+    # ------------------------------------------------------------------ terminal pane height (temporary)
+
+    TERMINAL_STEP = 48          # px per Alt+± press (before zoom)
+    TERMINAL_MIN = 80           # smallest pane height
+    PANELS_MIN = 160            # the file panels never shrink below this
+
+    def _terminal_height_step(self, delta: int) -> None:
+        """Alt++ / Alt+- while typing in the terminal: grow / shrink the output
+        pane. Only lasts while the terminal has focus – `_on_focus_changed`
+        restores the original split as soon as focus goes anywhere else."""
+        if not self._terminal.isVisible():
+            return
+        sizes = self._v_splitter.sizes()
+        if len(sizes) != 2 or sum(sizes) <= 0:
+            return
+        if self._terminal_base_sizes is None:
+            self._terminal_base_sizes = list(sizes)
+        total = sum(sizes)
+        term = sizes[1] + delta * theme.px(self.TERMINAL_STEP)
+        term = max(theme.px(self.TERMINAL_MIN), min(total - theme.px(self.PANELS_MIN), term))
+        self._v_splitter.setSizes([total - term, term])
+
+    def _terminal_height_from_palette(self, delta: int) -> None:
+        self._focus_cmdline()
+        self._terminal_height_step(delta)
+
+    def _on_focus_changed(self, old, new) -> None:
+        """Revert a temporary terminal height once focus leaves the terminal pane.
+        ``new`` is None when the whole window deactivates – keep the size then,
+        focus comes back to the same widget."""
+        if self._terminal_base_sizes is None or new is None:
+            return
+        if self._terminal.isAncestorOf(new) or new is self._terminal:
+            return
+        base, self._terminal_base_sizes = self._terminal_base_sizes, None
+        if self._terminal.isVisible():
+            self._v_splitter.setSizes(base)
+
     def _focus_active_panel(self) -> None:
         self._active_panel_widget.give_focus()
 
@@ -709,6 +754,7 @@ class MainWindow(QMainWindow):
             e("Files", "Delete", self._delete_files, "F8", icon="trash"),
             e("Files", "View", self._view_file, "F3", icon="eye"),
             e("Files", "Edit", self._edit_file, "F4", icon="edit"),
+            e("Files", "Edit in built-in editor", self._edit_builtin, icon="edit"),
             e("Files", "Properties", self._show_properties, "Alt+Enter", icon="info"),
             e("Files", "Compute hash…", self._compute_hash, icon="hash"),
             e("Files", "Calculate size", self._calc_size, icon="scale"),
@@ -757,6 +803,7 @@ class MainWindow(QMainWindow):
               status=self._index.status_text),
             e("Tools", "Terminal history", children=self._terminal_history_entries, icon="terminal"),
             e("Tools", "File index settings…", self._open_index_settings, icon="settings"),
+            e("Tools", "External editor…", self._open_editor_settings, icon="settings"),
             e("Tools", "Rescan file index now", lambda: (self._index.rescan(), Toast.show_message(self, "Rescan requested", "info")),
               icon="refresh"),
             # tools
@@ -773,6 +820,10 @@ class MainWindow(QMainWindow):
               checked=self._act_toolbar.isChecked()),
             e("Show", "Toggle terminal pane", lambda: (self._act_cmdbar.toggle(), self._toggle_cmdbar()),
               checked=self._act_cmdbar.isChecked()),
+            e("Show", "Terminal pane taller (until focus leaves it)", lambda: self._terminal_height_from_palette(+1),
+              "Alt++", icon="terminal"),
+            e("Show", "Terminal pane shorter (until focus leaves it)", lambda: self._terminal_height_from_palette(-1),
+              "Alt+-", icon="terminal"),
             e("Show", "Theme", children=theme_children, icon="moon"),
             e("Show", "Zoom", children=zoom_children, icon="zoom_in"),
             e("Show", "Zoom in", lambda: self._zoom_step(+1), "Ctrl++", icon="zoom_in"),
@@ -829,12 +880,40 @@ class MainWindow(QMainWindow):
                 FileViewerWindow(entry.full_path, self).show()
 
     def _edit_file(self) -> None:
+        """F4: the configured external editor (AppConfig.external_editor);
+        empty command or a program that cannot be found → built-in editor."""
         entries = self._active_panel_widget.selected_entries()
         paths = [e.full_path for e in entries if not e.is_dir]
         if not paths:
             return
+        cmd = self._cfg.config.external_editor.strip()
+        if cmd:
+            from src.editor import external
+            try:
+                external.launch(cmd, paths, self._active_panel_widget.current_path)
+                return
+            except FileNotFoundError as exc:
+                Toast.show_message(self, f"{exc} – using the built-in editor", "warning")
+            except Exception as exc:
+                Toast.show_message(self, f"Editor failed: {exc}", "error")
+                return
+        self._edit_builtin(paths)
+
+    def _edit_builtin(self, paths: list[str] | None = None) -> None:
+        if paths is None:
+            paths = [e.full_path for e in self._active_panel_widget.selected_entries() if not e.is_dir]
+        if not paths:
+            return
         from src.editor.file_editor import FileEditorWindow
         FileEditorWindow(paths, self).exec()
+
+    def _open_editor_settings(self) -> None:
+        from .dialogs.editor_dialog import EditorSettingsDialog
+        dlg = EditorSettingsDialog(self._cfg.config.external_editor, self)
+        if dlg.exec():
+            self._cfg.config.external_editor = dlg.command()
+            self._cfg.save()
+            Toast.show_message(self, "Editor settings saved", "success")
 
     def _copy_or_move(self, job_type: JobType) -> None:
         sources = self._active_panel_widget.selected_entries()

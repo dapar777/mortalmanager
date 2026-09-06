@@ -33,7 +33,8 @@ class IndexSettingsDialog(QDialog):
         layout.setSpacing(theme.px(10))
         layout.addWidget(Heading("File index", 2))
         hint = QLabel("The palette finds files by name from this index. One running instance keeps it "
-                      "up to date for all the others (full scan, then live changes).")
+                      "up to date for all the others (full scan, then live changes). Network drives and "
+                      "UNC shares are never indexed, even when listed here.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         layout.addWidget(hint)

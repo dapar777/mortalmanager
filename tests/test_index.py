@@ -103,3 +103,17 @@ def test_smart_patterns(tmp_path: Path):
     assert {h[1] for h in idx.search("s", kind="dirs")} == {"src", "docs", "skip", "node_modules"}
     idx.search("[invalid", kind="files")   # invalid regex -> treated as words, must not raise
     idx.close()
+
+
+def test_network_roots_are_skipped(tmp_path: Path, monkeypatch):
+    from src.index import file_index
+
+    assert file_index.is_network_path("\\\\server\\share\\docs")
+    assert not file_index.is_network_path(str(tmp_path))
+    local = tmp_path / "local"
+    local.mkdir()
+    net = tmp_path / "net"
+    net.mkdir()
+    monkeypatch.setattr(file_index, "is_network_path", lambda p: p.startswith(str(net)))
+    cfg = IndexConfig(roots=[str(local), str(net)])
+    assert cfg.normalized_roots() == [str(local)]

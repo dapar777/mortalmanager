@@ -47,6 +47,8 @@ class IndexConfig:
     rescan_hours: float = 24.0
 
     def normalized_roots(self) -> list[str]:
+        """Existing roots only; network drives / UNC shares are dropped even
+        when configured (slow, and not ours to crawl) – see is_network_path()."""
         out: list[str] = []
         for r in self.roots:
             r = r.strip()
@@ -54,9 +56,31 @@ class IndexConfig:
                 continue
             if len(r) == 2 and r[1] == ":":
                 r += "\\"
-            if os.path.isdir(r):
+            if os.path.isdir(r) and not is_network_path(r):
                 out.append(os.path.normpath(r) + ("\\" if r.endswith(("\\", "/")) and not os.path.normpath(r).endswith("\\") else ""))
         return out
+
+
+_DRIVE_REMOTE = 4
+
+
+def is_network_path(path: str) -> bool:
+    """True for UNC paths and mapped network drives (GetDriveTypeW ==
+    DRIVE_REMOTE). Cloud sync folders (Google Drive, OneDrive…) live on a
+    local or virtual *fixed* drive and are indexed normally."""
+    p = os.path.abspath(path)
+    if p.startswith(("\\\\", "//")):
+        return True
+    if os.name != "nt":
+        return False
+    drive = os.path.splitdrive(p)[0]
+    if not drive:
+        return False
+    try:
+        import ctypes
+        return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == _DRIVE_REMOTE  # type: ignore[attr-defined]
+    except Exception:
+        return False
 
 
 def default_config() -> IndexConfig:

@@ -3,7 +3,7 @@
 Dvoupanelový souborový manažer pro Windows ve stylu Total Commanderu (Python 3.12+, PySide6).
 
 **Stav:** rozdělaný projekt. Jádro je funkční: dva panely s taby, kopírování/přesun/mazání přes frontu jobů
-s průběhem a pause/resume/cancel, archivy (zip, tar, 7z), FTP/SFTP, prohlížeč (F3) a editor (F4), vestavěný
+s průběhem a pause/resume/cancel, archivy (zip, tar, 7z), FTP/SFTP, prohlížeč (F3) a editor (F4, výchozí externí `code`), vestavěný
 terminál, paleta příkazů, hledání, hromadné přejmenování, duplicity, hashe, oblíbené, nativní shell context menu,
 git/svn stav souborů, tmavé a světlé téma, plynulý zoom celého UI. Chybí balení a GUI testy.
 
@@ -12,7 +12,8 @@ git/svn stav souborů, tmavé a světlé téma, plynulý zoom celého UI. Chybí
 ```bash
 pip install -e .[dev]
 python -m src.main        # s konzolí (log do konzole)
-restart.bat              # bez konzole (pythonw.exe), log v %APPDATA%\MortalManager\mortalmanager.log
+restart.bat              # restart: zabije běžící instance a spustí novou (pythonw.exe, log v %APPDATA%\MortalManager\mortalmanager.log)
+start.bat                # další instance vedle běžících (nic nezabíjí)
 ```
 
 ## Vzhled
@@ -36,7 +37,8 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Rychlý filtr seznamu (jako v TC) | Ctrl+S nebo `*`, Esc zruší, Enter zpět do seznamu |
 | Kontextové menu | pravé tlačítko; nahoře sekce nejčastěji používaných položek |
 | Cesta / oblíbené / nový tab | Ctrl+L / Ctrl+D / Ctrl+T |
-| Terminál | Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat |
+| Editor | F4 = externí editor (výchozí `code`, nastavení *Commands → External Editor…*, `{file}` = místo pro cesty; prázdné = vestavěný), *Files → Edit in Built-in Editor* |
+| Terminál | Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat, Alt++ / Alt+− dočasně zvětší / zmenší výstup (vrátí se při odchodu fokusu z terminálu) |
 
 Barvy v kódu: pouze v `src/solarqt/theme.py` (`tests/test_theme.py` to hlídá). Stav git/svn se ukazuje jako
 sémantická tečka na ikoně (žlutá = změněno, modrá = nesledováno, zelená = přidáno, červená = smazáno/konflikt).

@@ -36,6 +36,7 @@ class AppConfig:
     thumbnail_size: int = 64
     editor_font: str = "Consolas"
     editor_font_size: int = 10
+    external_editor: str = "code"   # F4 command line ({file} = paths); empty = built-in editor
     left_panel: PanelConfig = field(default_factory=PanelConfig)
     right_panel: PanelConfig = field(default_factory=PanelConfig)
     splitter_ratio: float = 0.5
@@ -91,6 +92,7 @@ class ConfigManager:
         cfg.thumbnail_size = d.get("thumbnail_size", cfg.thumbnail_size)
         cfg.editor_font = d.get("editor_font", cfg.editor_font)
         cfg.editor_font_size = d.get("editor_font_size", cfg.editor_font_size)
+        cfg.external_editor = str(d.get("external_editor", cfg.external_editor))
         cfg.splitter_ratio = d.get("splitter_ratio", cfg.splitter_ratio)
         cfg.window_width = d.get("window_width", cfg.window_width)
         cfg.window_height = d.get("window_height", cfg.window_height)
@@ -132,6 +134,7 @@ class ConfigManager:
         self._db.set_setting("thumbnail_size", cfg.thumbnail_size)
         self._db.set_setting("editor_font", cfg.editor_font)
         self._db.set_setting("editor_font_size", cfg.editor_font_size)
+        self._db.set_setting("external_editor", cfg.external_editor)
         self._db.set_setting("splitter_ratio", cfg.splitter_ratio)
         self._db.set_setting("window_width", cfg.window_width)
         self._db.set_setting("window_height", cfg.window_height)
