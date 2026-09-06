@@ -1,0 +1,149 @@
+"""Application configuration manager backed by SQLite."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from src.database.db import DatabaseManager
+
+
+_APP_DATA_DIR = Path.home() / "AppData" / "Roaming" / "MortalManager"
+_DB_PATH = _APP_DATA_DIR / "config.db"
+
+
+@dataclass
+class PanelConfig:
+    sort_field: str = "NAME"
+    sort_order: str = "ASCENDING"
+    show_hidden: bool = False
+    column_widths: dict[str, int] = field(default_factory=lambda: {
+        "name": 250, "ext": 60, "size": 90, "modified": 140, "attributes": 60
+    })
+
+
+@dataclass
+class AppConfig:
+    theme: str = "light"
+    language: str = "en"
+    confirm_delete: bool = True
+    confirm_overwrite: bool = True
+    use_trash: bool = True
+    show_thumbnails: bool = True
+    thumbnail_size: int = 64
+    editor_font: str = "Consolas"
+    editor_font_size: int = 10
+    left_panel: PanelConfig = field(default_factory=PanelConfig)
+    right_panel: PanelConfig = field(default_factory=PanelConfig)
+    splitter_ratio: float = 0.5
+    window_width: int = 1280
+    window_height: int = 800
+    window_maximized: bool = False
+    command_bar_visible: bool = True
+    toolbar_visible: bool = True
+    fkeys_bar_visible: bool = True
+    cmd_expand_shortcut: str = "Ctrl+E"
+    cmd_expanded: bool = False
+
+
+class ConfigManager:
+    """High-level configuration API wrapping DatabaseManager."""
+
+    _instance: ConfigManager | None = None
+
+    def __init__(self, db: DatabaseManager | None = None) -> None:
+        if db is None:
+            db = DatabaseManager(_DB_PATH)
+        self._db = db
+        self._cache: AppConfig = self._load()
+
+    @classmethod
+    def get_instance(cls) -> ConfigManager:
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    # ------------------------------------------------------------------ load/save
+
+    def _load(self) -> AppConfig:
+        cfg = AppConfig()
+        d = self._db.get_all_settings()
+
+        cfg.theme = d.get("theme", cfg.theme)
+        cfg.language = d.get("language", cfg.language)
+        cfg.confirm_delete = d.get("confirm_delete", cfg.confirm_delete)
+        cfg.confirm_overwrite = d.get("confirm_overwrite", cfg.confirm_overwrite)
+        cfg.use_trash = d.get("use_trash", cfg.use_trash)
+        cfg.show_thumbnails = d.get("show_thumbnails", cfg.show_thumbnails)
+        cfg.thumbnail_size = d.get("thumbnail_size", cfg.thumbnail_size)
+        cfg.editor_font = d.get("editor_font", cfg.editor_font)
+        cfg.editor_font_size = d.get("editor_font_size", cfg.editor_font_size)
+        cfg.splitter_ratio = d.get("splitter_ratio", cfg.splitter_ratio)
+        cfg.window_width = d.get("window_width", cfg.window_width)
+        cfg.window_height = d.get("window_height", cfg.window_height)
+        cfg.window_maximized = d.get("window_maximized", cfg.window_maximized)
+        cfg.command_bar_visible = d.get("command_bar_visible", cfg.command_bar_visible)
+        cfg.toolbar_visible = d.get("toolbar_visible", cfg.toolbar_visible)
+        cfg.fkeys_bar_visible = d.get("fkeys_bar_visible", cfg.fkeys_bar_visible)
+        cfg.cmd_expand_shortcut = d.get("cmd_expand_shortcut", cfg.cmd_expand_shortcut)
+        cfg.cmd_expanded = d.get("cmd_expanded", cfg.cmd_expanded)
+
+        lp = d.get("left_panel", {})
+        if isinstance(lp, dict):
+            cfg.left_panel = PanelConfig(**{k: v for k, v in lp.items() if k in PanelConfig.__dataclass_fields__})
+
+        rp = d.get("right_panel", {})
+        if isinstance(rp, dict):
+            cfg.right_panel = PanelConfig(**{k: v for k, v in rp.items() if k in PanelConfig.__dataclass_fields__})
+
+        return cfg
+
+    def save(self) -> None:
+        cfg = self._cache
+        self._db.set_setting("theme", cfg.theme)
+        self._db.set_setting("language", cfg.language)
+        self._db.set_setting("confirm_delete", cfg.confirm_delete)
+        self._db.set_setting("confirm_overwrite", cfg.confirm_overwrite)
+        self._db.set_setting("use_trash", cfg.use_trash)
+        self._db.set_setting("show_thumbnails", cfg.show_thumbnails)
+        self._db.set_setting("thumbnail_size", cfg.thumbnail_size)
+        self._db.set_setting("editor_font", cfg.editor_font)
+        self._db.set_setting("editor_font_size", cfg.editor_font_size)
+        self._db.set_setting("splitter_ratio", cfg.splitter_ratio)
+        self._db.set_setting("window_width", cfg.window_width)
+        self._db.set_setting("window_height", cfg.window_height)
+        self._db.set_setting("window_maximized", cfg.window_maximized)
+        self._db.set_setting("command_bar_visible", cfg.command_bar_visible)
+        self._db.set_setting("toolbar_visible", cfg.toolbar_visible)
+        self._db.set_setting("fkeys_bar_visible", cfg.fkeys_bar_visible)
+        self._db.set_setting("cmd_expand_shortcut", cfg.cmd_expand_shortcut)
+        self._db.set_setting("cmd_expanded", cfg.cmd_expanded)
+        self._db.set_setting("left_panel", {
+            "sort_field": cfg.left_panel.sort_field,
+            "sort_order": cfg.left_panel.sort_order,
+            "show_hidden": cfg.left_panel.show_hidden,
+            "column_widths": cfg.left_panel.column_widths,
+        })
+        self._db.set_setting("right_panel", {
+            "sort_field": cfg.right_panel.sort_field,
+            "sort_order": cfg.right_panel.sort_order,
+            "show_hidden": cfg.right_panel.show_hidden,
+            "column_widths": cfg.right_panel.column_widths,
+        })
+
+    # ------------------------------------------------------------------ access
+
+    @property
+    def config(self) -> AppConfig:
+        return self._cache
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._db.get_setting(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        self._db.set_setting(key, value)
+
+    @property
+    def data_dir(self) -> Path:
+        return _APP_DATA_DIR
