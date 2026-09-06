@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.solarqt import theme
 from src.core.file_model import FileEntry
 
 
@@ -139,7 +140,7 @@ class BulkRenameDialog(QDialog):
             item = QTableWidgetItem(new_name)
             if new_name != old_name:
                 from PySide6.QtGui import QColor
-                item.setForeground(QColor("#6AB0DE"))
+                item.setForeground(QColor(theme.current().semantic_fg["info"]))
             self._preview_table.setItem(row, 1, item)
 
     def _compute_pairs(self) -> list[tuple[str, str]]:

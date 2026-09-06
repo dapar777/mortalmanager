@@ -6,31 +6,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MortalManager — dvoupanelový souborový manažer pro Windows ve stylu Total Commanderu (Python 3.12+, PySide6).
 Rozdělaný projekt: jádro (panely, taby, kopírování/přesun/mazání přes frontu jobů, archivy, FTP/SFTP, prohlížeč F3,
-editor F4, vestavěný terminál, command palette, VCS badge u souborů) je funkční, ale bez README a bez balení.
-`pyproject.toml` odkazuje na `README.md`, který neexistuje. Kód, docstringy a komentáře jsou anglicky.
+editor F4, vestavěný terminál, command palette, VCS tečky u souborů, zoom UI) je funkční; chybí balení a GUI testy.
+`README.md` je krátký český přehled. Kód, docstringy a komentáře jsou anglicky, UI anglicky, komunikace s autorem česky.
 
 ## Příkazy
 
 Aplikace se spouští jako modul z kořene repa (`src/main.py` si sám přidá kořen do `sys.path`). Na stroji autora
-je venv v `C:\mm_venv` (Python 3.12, PySide6, pytest); `restart.bat` zabije běžící instanci a spustí novou z tohoto venvu.
-`pyproject.toml` původně vyžadoval Python 3.13 a měl neexistující build backend; opraveno na `>=3.12` a
-`setuptools.build_meta` (ruff/mypy cílí dál na 3.13).
+je venv v `C:\mm_venv` (Python 3.12, PySide6, pytest); `restart.bat` zabije **všechny** běžící python/pythonw procesy
+s `src.main` v příkazové řádce a spustí novou instanci přes `pythonw.exe` (bez konzole; `src/main.py` pak loguje do
+`%APPDATA%\MortalManager\mortalmanager.log`). `pyproject` má `[project.gui-scripts]`, ne `scripts`. Venv stojí na **Pythonu z Microsoft Store (MSIX)** – hlavní panel
+proto ignoruje ikonu okna; `MainWindow._apply_taskbar_identity` nastavuje AppUserModel vlastnosti přímo na HWND
+(pywin32 `propsys`), bez toho je v panelu ikona Pythonu. ruff a mypy v `C:\mm_venv` nainstalované
+nejsou (`pip install -e .[dev]` je doplní); jejich konfigurace cílí na Python 3.13.
 
 ```bash
 python -m src.main                                  # spustit aplikaci
 restart.bat                                         # restart běžící instance (C:\mm_venv)
-python -m pytest -q                                 # testy (59, běží ~2 s, bez GUI)
-python -m pytest -q tests/test_core.py              # jeden soubor
+python -m pytest -q                                 # testy (69, běží ~3 s, headless Qt přes offscreen)
+python -m pytest -q tests/test_theme.py             # vzhled: hex jen v theme.py, zoom, ikony, barvy tabulky
 python -m pytest -q tests/test_core.py::test_format_size_kb   # jeden test
-python -m ruff check src tests                      # lint (ruff a mypy nejsou v C:\mm_venv nainstalované)
+python -m ruff check src tests                      # lint
 python -m mypy src                                  # typy, strict
 pip install -e .[dev]                               # vývojová instalace
 ```
 
-Testy pokrývají jen `core`, `filesystem`, `archive` a `database` (čisté funkce, dočasné adresáře, in-memory
-SQLite); GUI testy neexistují, `qt_api` v pytest konfiguraci hlásí varování, protože `pytest-qt` není nainstalován.
-Kořenové `temp_shell*_debug*.py` jsou jednorázové průzkumné skripty z ladění nativní Windows shell context menu
-(pywin32 `SHParseDisplayName`, `IContextMenu`); samotná funkce je v `PanelWidget._show_context_menu`.
+Testy pokrývají `core`, `filesystem`, `archive`, `database` a vzhled (`test_theme.py`; `tests/conftest.py`
+dává session fixture `qapp` s `QT_QPA_PLATFORM=offscreen`). GUI testy hlavního okna neexistují – `MainWindow`
+čte reálný config v `%APPDATA%`. `qt_api` v pytest konfiguraci hlásí varování (`pytest-qt` není nainstalován).
+Kořenové `temp_shell*_debug*.py` jsou jednorázové průzkumné skripty z ladění nativní Windows shell context menu;
+samotná funkce je v `PanelWidget._show_context_menu`. Pasti pywin32: `IContextMenu.InvokeCommand` bere **8prvkovou**
+n-tici `(fMask, hwnd, verb, params, dir, nShow, hotkey, hicon)` (9 prvků = tichý TypeError); COM se na GUI vlákně
+inicializuje jednou (`_com_init`) a nikdy neodinicializuje pod Qt; shell verby `open/delete/rename/copyaspath` se
+přeskakují (máme vlastní položky, shell „rename“ mimo Explorer nic nedělá). Pod `pythonw` jdou výjimky ze slotů do
+logu přes `sys.excepthook`.
 
 ## Architektura
 
@@ -40,26 +48,68 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `OperationProgress` (`file_model.py`), `SelectionManager`, `NavigationHistory` (zpět/vpřed),
   `UndoManager` (zásobník vratných souborových operací).
 - **`filesystem/`** — `FileSystemProvider` (ABC) s async metodami; `LocalFileSystemProvider` je Windows-optimalizovaný
-  (atributy přes `win32`, koš, typy disků, hledání, výpočet velikosti), `DirectoryWatcher` emituje Qt signál při změně
-  adresáře. FTP/SFTP (`ftp/`) jsou samostatní klienti, ne implementace providera.
+  (výpis adresáře jedním `os.scandir` průchodem bez stat() na soubor, koš, typy disků, hledání, výpočet velikosti),
+  `DirectoryWatcher` emituje `directory_changed(str)`. FTP/SFTP (`ftp/`) jsou samostatní klienti, ne provider.
 - **`jobs/`** — `JobQueue` (QObject) běží nad **asyncio smyčkou**, kterou `src/main.py` pumpuje z Qt `QTimer`
-  každých 20 ms (`loop.call_soon(loop.stop); loop.run_forever()`). Dlouhé operace (copy/move/delete/search)
-  se odesílají jako `JobSpec` z `MainWindow`, průběh chodí signály do `CopyDialog`; joby umí pause/resume/cancel.
-  Cokoli blokujícího musí jít touto cestou, ne přímo z GUI vlákna.
-- **`archive/`** — `ArchiveHandler` (ABC) + zip/tar/7z handlery za `ArchiveManager`; archivy se procházejí jako
-  virtuální adresáře.
+  každých 20 ms. Dlouhé operace se odesílají jako `JobSpec(job_type: JobType, sources, destination, options)`
+  přes `MainWindow._submit` (eviduje spec podle job_id); fronta hlásí `job_started / job_progress(job_id,
+  OperationProgress) / job_finished(job_id, JobResult) / job_failed`, `MainWindow` po dokončení obnoví oba panely
+  a ukáže `Toast`. `JobResult.undo_pairs` krmí `UndoManager`. Cokoli blokujícího musí jít touto cestou.
+- **`archive/`** — `ArchiveHandler` (ABC) + zip/tar/7z handlery za `ArchiveManager`.
 - **`database/`** — `DatabaseManager` nad SQLite v `%APPDATA%\MortalManager` (nastavení, záložky, oblíbené, FTP
-  relace, historie příkazů a cest, historie operací, uložené taby). **`settings/ConfigManager`** je singleton
-  (`get_instance()`) nad touž DB s dataclassami `AppConfig`/`PanelConfig`.
-- **`plugins/`** — `PluginManager` načítá moduly z plugin adresáře; typy `ListerPlugin` (náhled), `ContentPlugin`
-  (metadata), `PackerPlugin` (archivy).
-- **`gui/`** — `MainWindow` (menu, toolbar, F-klávesová lišta, zkratky, command palette, příkazová řádka s historií
-  a doplňováním, přepínání témat, relaunch jako admin) drží dva `PanelWidget` (levý/pravý, aktivní strana se
-  přepíná Tabem). `PanelWidget` = adresní řádek + taby + `FileTableView`/`FileTableModel` + lišta disků; načítá
-  adresář asynchronně, anotuje git/svn stav položek a hlídá změny watcherem. Dialogy jsou v `gui/dialogs/`,
-  vestavěný terminál v `terminal_widget.py`. Téma (dark/light) je QSS generované v `src/main.py`
-  (`apply_theme`), lze přepnout za běhu.
-- **`viewer/`, `editor/`** — samostatná okna pro F3/F4.
+  relace, historie příkazů a cest, historie operací, taby). **`settings/ConfigManager`** je singleton
+  (`get_instance()`) s dataclassami `AppConfig` (mj. `theme`, `zoom`) / `PanelConfig`.
+- **`plugins/`** — `PluginManager(plugin_dir)` načítá `*.py` moduly; typy `ListerPlugin`, `ContentPlugin`, `PackerPlugin`.
+- **`solarqt/`** — vendorovaný designový systém z `c:\code\solarqt` (manuál `MANUAL.md` tam je závazný vzor;
+  referenční aplikace `c:\code\task-master`). `theme.py` = **jediné místo s hex barvami** (Solarized tokeny
+  `LIGHT`/`DARK`, `semantic_style`, `status_style` pro VCS stavy, písma, QSS). Rozšíření oproti originálu:
+  **zoom** – `theme.set_zoom(f)`, `theme.px(n)` / `theme.pt(n)` škálují každou velikost v QSS i v kódu;
+  `icons.pixmap(name, size)` už zoom aplikuje. `widgets.retheme_tree(root, repolish=)` volá `retheme()` na
+  každém widgetu, který drží barvu/velikost mimo QSS (IconButton, tabulka, panel, terminál…).
+- **`gui/`** — `MainWindow`: `#headerBar` (logo z `assets/icons`, název, `DriveBar` – disky enumeruje worker
+  v `QThreadPool`, „Search“, „Commands“, přepínač tématu) · splitter dvou `PanelWidget` + `#fkeysBar` ·
+  `EmbeddedTerminalWidget` · stavový řádek (info aktivního panelu, zoom %, volné místo). Zoom: Ctrl+kolečko
+  (globální event filter), Ctrl+±, Ctrl+0; `_zoom_step` je **throttlovaný** – první notch se aplikuje hned,
+  další se během 220 ms slučují, protože `theme.apply` + repolish celého okna stojí 150–300 ms. Zoom i téma se
+  persistují do configu. Pod `theme.HEADER_COMPACT_BELOW` (1100 px × zoom) se schovají texty v hlavičce a v F-liště.
+  `PanelWidget` = `QFrame#panel` s property `active` (aktivní = akcentový rámeček): hlavička (zpět/vpřed/nahoru,
+  `#pathEdit`, refresh, oblíbené) + `QTabBar` + `FileTableView` + patička. Adresář načítá asynchronně s **generací**
+  (pomalý výpis nikdy nepřepíše novější), VCS root/status detekuje `_VcsInfo` v executoru s cache na kořen
+  repa (nikdy subprocess z GUI vlákna). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory),
+  `status_info`, `request_focus`, `favorites_requested`. `FileTableModel` bere barvy z `_Look` (cache per téma),
+  shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
+  Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
+  úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). F2 / Shift+F6 = přejmenování v místě
+  (`FileTableModel.setData` → `rename_requested` → `MainWindow._on_inline_rename` → job RENAME; delegát předvybere
+  jméno bez přípony), Ctrl+M = hromadné.
+  Dlouhá menu jdou přes `panel.fit_menu_on_screen`, které při přetečení obrazovky přepne QSS property
+  `compact` ("true", pak "dense"), aby Qt nelámalo menu do dvou sloupců. Kontextové menu má nahoře sekci „Frequently used“:
+  `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
+  settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
+  `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
+- **`viewer/`, `editor/`** — samostatná okna pro F3/F4; mono písmo `theme.mono_font()`, zvýraznění syntaxe
+  ze Solarized konstant (`theme.GREEN` klíčová slova, `CYAN` řetězce, `MAGENTA` čísla).
+
+## Paleta příkazů = registr všech funkcí
+
+`MainWindow._build_palette_commands` je **první místo**, kam patří každá nová uživatelská funkce (kategorie, popisek,
+zkratka, `run`); menu a F-lišta jsou jen podmnožiny. Položka s `children` (seznam nebo callable) otevře další úroveň
+jako ve VS Code (Sort by › Size › Descending, Go to drive › C:, Switch tab, Favourites, History, Theme, Zoom,
+Terminal shell); `checked=True` označí aktuální stav. Nová funkce bez záznamu v paletě = nedokončená. Paleta ukazuje nahoře naposledy použité příkazy (i listy
+podúrovní zploštělé na „Sort by › Size › Descending“); cesty se ukládají do DB settings `palette_recent`, klíč =
+popisky oddělené `|`, takže **přejmenování popisku příkazu** starý záznam tiše zahodí.
+
+## Pravidla vzhledu (viz solarqt MANUAL.md)
+
+- Žádný hex mimo `src/solarqt/theme.py`; ptej se `theme.current()`, `theme.semantic_style(kind)`, `theme.status_style()`.
+- Každá velikost v pixelech/bodech přes `theme.px()` / `theme.pt()` (i v `setContentsMargins`, `setMinimumWidth`),
+  jinak se prvek nezoomuje. Widget, který si drží barvu/velikost/písmo mimo QSS, má `retheme()`.
+- Ikony jen kreslené (`icons.icon("name")`), ne emoji ani unicode šipky; nová ikona = záznam v `icons._PATHS`
+  (24×24, tah bez barvy). Ikona bez textu má tooltip.
+- Barva nese význam: modrá info, žlutá varování, červená chyba/destruktivní, zelená úspěch, oranžová akcent/výběr.
+  Destruktivní tlačítko = `DangerButton` / property `danger`, nikdy `:default`.
+- Nový widget s pevnou šířkou v hlavičce/panelu ověř v úzkém okně (`MIN_WINDOW_WIDTH` 350 px): dlouhé popisky
+  mají `QSizePolicy.Ignored` vodorovně.
 
 Konvence: Qt widgety komunikují signály, ne přímými voláními do rodiče; stav, který má přežít restart, patří do
 `DatabaseManager`, ne do souborů; `FileEntry.full_path` je jediný zdroj cesty položky.

@@ -91,6 +91,43 @@ def _entry_from_path(path: Path, is_parent: bool = False) -> FileEntry:
     )
 
 
+def _entry_from_direntry(de: os.DirEntry) -> FileEntry:
+    """FileEntry from a scandir entry without extra syscalls where possible."""
+    is_symlink = de.is_symlink()
+    is_dir = de.is_dir()
+    try:
+        st = de.stat(follow_symlinks=False)
+        modified = datetime.fromtimestamp(st.st_mtime)
+        created = datetime.fromtimestamp(getattr(st, "st_birthtime", st.st_ctime))
+        size = -1 if is_dir else st.st_size
+        attrs = getattr(st, "st_file_attributes", None)
+    except OSError:
+        now = datetime.now()
+        modified, created, size, attrs = now, now, -1, None
+    path = Path(de.path)
+    if attrs is None:
+        attrs = _get_win_attributes(path)
+    target: str | None = None
+    if is_symlink:
+        try:
+            target = os.readlink(de.path)
+        except OSError:
+            target = None
+    name = de.name
+    return FileEntry(
+        name=name,
+        path=path,
+        size=size,
+        modified=modified,
+        created=created,
+        is_dir=is_dir,
+        is_symlink=is_symlink,
+        attributes=attrs,
+        extension="" if is_dir else path.suffix.lstrip("."),
+        target=target,
+    )
+
+
 class LocalFileSystemProvider(FileSystemProvider):
     """Full-featured local filesystem provider."""
 
@@ -118,18 +155,21 @@ class LocalFileSystemProvider(FileSystemProvider):
         return entries
 
     def _list_sync(self, directory: Path, show_hidden: bool) -> list[FileEntry]:
+        """One ``os.scandir`` pass: on Windows the directory enumeration already
+        carries size, times and attributes, so no per-file stat() is needed."""
         entries: list[FileEntry] = []
 
         # Add parent entry if not at root
         parent = directory.parent
         if parent != directory:
+            now = datetime.now()
             entries.append(
                 FileEntry(
                     name="..",
                     path=parent,
                     size=-1,
-                    modified=datetime.now(),
-                    created=datetime.now(),
+                    modified=now,
+                    created=now,
                     is_dir=True,
                     is_symlink=False,
                     attributes=0x10,
@@ -138,19 +178,18 @@ class LocalFileSystemProvider(FileSystemProvider):
             )
 
         try:
-            raw = list(directory.iterdir())
+            with os.scandir(directory) as it:
+                for de in it:
+                    try:
+                        entry = _entry_from_direntry(de)
+                    except Exception as exc:
+                        logger.debug("Skipping %s: %s", de.path, exc)
+                        continue
+                    if not show_hidden and entry.is_hidden:
+                        continue
+                    entries.append(entry)
         except PermissionError as exc:
             logger.warning("Permission denied listing %s: %s", directory, exc)
-            return entries
-
-        for child in raw:
-            try:
-                entry = _entry_from_path(child)
-                if not show_hidden and entry.is_hidden:
-                    continue
-                entries.append(entry)
-            except Exception as exc:
-                logger.debug("Skipping %s: %s", child, exc)
 
         return entries
 

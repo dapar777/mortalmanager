@@ -24,6 +24,10 @@ class SelectionManager:
     def deselect(self, entry: FileEntry) -> None:
         self._selected.discard(entry.full_path)
 
+    def deselect_path(self, path: str) -> None:
+        """Drop a path that no longer exists in the listing."""
+        self._selected.discard(path)
+
     def toggle(self, entry: FileEntry) -> None:
         if entry.full_path in self._selected:
             self.deselect(entry)

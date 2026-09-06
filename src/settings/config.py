@@ -26,6 +26,7 @@ class PanelConfig:
 @dataclass
 class AppConfig:
     theme: str = "light"
+    zoom: float = 1.0          # UI zoom factor (0.7–2.0), see solarqt.theme
     language: str = "en"
     confirm_delete: bool = True
     confirm_overwrite: bool = True
@@ -71,6 +72,10 @@ class ConfigManager:
         d = self._db.get_all_settings()
 
         cfg.theme = d.get("theme", cfg.theme)
+        try:
+            cfg.zoom = float(d.get("zoom", cfg.zoom))
+        except (TypeError, ValueError):
+            cfg.zoom = 1.0
         cfg.language = d.get("language", cfg.language)
         cfg.confirm_delete = d.get("confirm_delete", cfg.confirm_delete)
         cfg.confirm_overwrite = d.get("confirm_overwrite", cfg.confirm_overwrite)
@@ -102,6 +107,7 @@ class ConfigManager:
     def save(self) -> None:
         cfg = self._cache
         self._db.set_setting("theme", cfg.theme)
+        self._db.set_setting("zoom", cfg.zoom)
         self._db.set_setting("language", cfg.language)
         self._db.set_setting("confirm_delete", cfg.confirm_delete)
         self._db.set_setting("confirm_overwrite", cfg.confirm_overwrite)

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.database.db import DatabaseManager, FavoriteRow
+from src.solarqt.widgets import ActionButton, DangerButton
 
 
 class FavoritesPickerDialog(QDialog):
@@ -57,14 +57,13 @@ class FavoritesPickerDialog(QDialog):
         layout.setSpacing(4)
 
         self._list = QListWidget()
-        self._list.setFont(QFont("Segoe UI", 9))
         self._list.itemActivated.connect(self._navigate)
         self._list.installEventFilter(self)   # catch + / * before list handles them
         layout.addWidget(self._list)
 
         hint = QLabel("+  Add current dir    *  Configure    Enter  Navigate")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("font-size: 8pt; color: #888;")
+        hint.setObjectName("caption")
         layout.addWidget(hint)
 
     def _load(self) -> None:
@@ -186,11 +185,11 @@ class FavoritesConfigDialog(QDialog):
         layout.addWidget(self._table, stretch=1)
 
         btn_row = QHBoxLayout()
-        btn_up = QPushButton("▲ Up")
+        btn_up = ActionButton("Up", "chevron_up")
         btn_up.clicked.connect(self._move_up)
-        btn_dn = QPushButton("▼ Down")
+        btn_dn = ActionButton("Down", "chevron_down")
         btn_dn.clicked.connect(self._move_down)
-        btn_del = QPushButton("Remove")
+        btn_del = DangerButton("Remove", "trash")
         btn_del.clicked.connect(self._remove)
         btn_row.addWidget(btn_up)
         btn_row.addWidget(btn_dn)

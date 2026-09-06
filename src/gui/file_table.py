@@ -1,27 +1,40 @@
-"""File table model and view – the core list component of each panel."""
+"""File table model and view – the core list component of each panel.
+
+Performance notes:
+- colours / fonts are cached per theme in ``_Look`` (no QColor per cell),
+- shell icons are cached per extension (per path only for exe/lnk/ico/url,
+  whose icon is embedded in the file), so a 10 000-file directory asks the
+  shell for a handful of icons, not 10 000,
+- VCS state is a small semantic dot painted over the icon, cached per
+  (icon, state, zoom).
+"""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import (
-    QFileInfo,
     QAbstractTableModel,
-    QTimer,
+    QFileInfo,
     QModelIndex,
-    QSortFilterProxyModel,
+    QSize,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QFileIconProvider, QHeaderView, QTableView
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileIconProvider,
+    QHeaderView,
+    QLineEdit,
+    QStyledItemDelegate,
+    QTableView,
+)
 
-_ICON_PROVIDER = QFileIconProvider()
-
-from src.core.file_model import FileEntry, SortField, SortOrder
+from src.core.file_model import FileEntry, SortField
+from src.solarqt import icons, theme
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +45,91 @@ _COL_SIZE = 2
 _COL_DATE = 3
 _COL_ATTR = 4
 
+# unzoomed column widths (px); Name stretches
+_COL_WIDTHS = {_COL_EXT: 52, _COL_SIZE: 88, _COL_DATE: 128, _COL_ATTR: 50}
+_COL_SORT = {
+    _COL_NAME: SortField.NAME, _COL_EXT: SortField.EXTENSION, _COL_SIZE: SortField.SIZE,
+    _COL_DATE: SortField.MODIFIED, _COL_ATTR: SortField.ATTRIBUTES,
+}
+
+INVALID_NAME_CHARS = '\\/:*?"<>|'
+
+# extensions whose icon lives in the file itself – never share by extension
+_PER_FILE_ICON_EXT = {"exe", "lnk", "ico", "url", "scr", "cur", "msi"}
+
+# git / svn status codes -> application state (theme.STATUS_KINDS maps to kind)
+_VCS_STATES = {
+    "M": "modified", "MM": "modified", "AM": "modified", "RM": "modified", " M": "modified",
+    "A": "added", "AA": "added", "R": "added", "C": "added",
+    "D": "deleted", "AD": "deleted", "!": "deleted",
+    "??": "untracked", "?": "untracked",
+    "U": "conflict", "UU": "conflict", "DD": "conflict", "AU": "conflict", "UA": "conflict",
+    "DU": "conflict", "UD": "conflict",
+    "I": "ignored", "!!": "ignored",
+}
+
+
+def vcs_state_of(code: str | None) -> str | None:
+    """Normalise a short status code to an application state (None = clean)."""
+    if not code or code == "clean":
+        return None
+    return _VCS_STATES.get(code, _VCS_STATES.get(code.strip(), "modified"))
+
+
+class _Look:
+    """Colours and fonts for the current theme (rebuilt on retheme)."""
+
+    def __init__(self) -> None:
+        t = theme.current()
+        self.text = QColor(t.text)
+        self.parent = QColor(t.text2)
+        self.hidden = QColor(t.muted)
+        self.marked_fg = QColor(t.semantic_fg["accent"])
+        self.marked_bg = QColor(theme.mix(t.accent, t.card, t.tint))
+        self.link = QColor(t.semantic_fg["info"])
+        base = QApplication.font()
+        # directories bold (700), files demi-bold (600) – readable, still distinct
+        self.bold = QFont(base)
+        self.bold.setWeight(QFont.Weight.Bold)
+        self.file = QFont(base)
+        self.file.setWeight(QFont.Weight.DemiBold)
+        self.italic = QFont(self.file)
+        self.italic.setItalic(True)
+        self.marked = QFont(base)
+        self.marked.setWeight(QFont.Weight.Bold)
+        self.dot: dict[str, QColor] = {
+            state: QColor(theme.status_style(state)[2]) for state in theme.STATUS_KINDS
+        }
+
 
 class FileTableModel(QAbstractTableModel):
     """Qt model for a directory listing."""
+
+    rename_requested = Signal(object, str)   # FileEntry, new name (in-place edit committed)
+
+    _provider: QFileIconProvider | None = None   # created lazily (needs a QApplication)
+    _ext_icons: dict[str, QIcon] = {}          # shared across panels and listings
+    _folder_icon: QIcon | None = None
+
+    @classmethod
+    def _prov(cls) -> QFileIconProvider:
+        if cls._provider is None:
+            cls._provider = QFileIconProvider()
+        return cls._provider
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._entries: list[FileEntry] = []
         self._selected: set[str] = set()
-        self._icon_cache: dict[str, QIcon] = {}
+        self._path_icons: dict[str, QIcon] = {}   # per-file icons (exe, lnk…), per listing
+        self._badged: dict[tuple[str, str, int], QIcon] = {}
+        self._look = _Look()
+        self._parent_icon = icons.icon("folder_up")
 
     # ------------------------------------------------------------------ data API
 
     def set_entries(self, entries: list[FileEntry]) -> None:
-        self._icon_cache.clear()
+        self._path_icons.clear()
         self.beginResetModel()
         self._entries = entries
         self.endResetModel()
@@ -58,24 +142,42 @@ class FileTableModel(QAbstractTableModel):
     def get_all_entries(self) -> list[FileEntry]:
         return list(self._entries)
 
+    def row_of_name(self, name: str) -> int:
+        for row, e in enumerate(self._entries):
+            if e.name == name:
+                return row
+        return -1
+
+    def retheme(self) -> None:
+        """Theme or zoom changed: rebuild colours/fonts and drop scaled icons."""
+        self._look = _Look()
+        self._badged.clear()
+        self._parent_icon = icons.icon("folder_up")
+        if self._entries:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(len(self._entries) - 1, len(_COLUMNS) - 1)
+            )
+
     # ------------------------------------------------------------------ selection overlay
 
     def set_selected(self, paths: set[str]) -> None:
-        self._selected = paths
-        self.dataChanged.emit(
-            self.index(0, 0),
-            self.index(len(self._entries) - 1, len(_COLUMNS) - 1),
-        )
+        changed = self._selected ^ paths
+        self._selected = set(paths)
+        if not self._entries:
+            return
+        if len(changed) <= 8:
+            for row, e in enumerate(self._entries):
+                if e.full_path in changed:
+                    self.dataChanged.emit(self.index(row, 0), self.index(row, len(_COLUMNS) - 1))
+        else:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(len(self._entries) - 1, len(_COLUMNS) - 1)
+            )
 
     def toggle_selected(self, path: str) -> None:
-        if path in self._selected:
-            self._selected.discard(path)
-        else:
-            self._selected.add(path)
-        self.dataChanged.emit(
-            self.index(0, 0),
-            self.index(len(self._entries) - 1, len(_COLUMNS) - 1),
-        )
+        new = set(self._selected)
+        new.symmetric_difference_update({path})
+        self.set_selected(new)
 
     @property
     def selected_paths(self) -> set[str]:
@@ -83,72 +185,109 @@ class FileTableModel(QAbstractTableModel):
 
     # ------------------------------------------------------------------ QAbstractTableModel interface
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return len(self._entries)
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self._entries)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return len(_COLUMNS)
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(_COLUMNS)
 
-    def headerData(
+    def headerData(  # noqa: N802
         self,
         section: int,
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return _COLUMNS[section]
+        if orientation == Qt.Orientation.Horizontal:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return _COLUMNS[section]
+            if role == Qt.ItemDataRole.TextAlignmentRole and section == _COL_SIZE:
+                return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return None
 
-    def data(
-        self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole
-    ) -> Any:
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if not index.isValid():
             return None
         row, col = index.row(), index.column()
         if row >= len(self._entries):
             return None
         entry = self._entries[row]
+        look = self._look
 
         if role == Qt.ItemDataRole.DisplayRole:
             return self._display(entry, col)
 
-        if role == Qt.ItemDataRole.DecorationRole and col == _COL_NAME:
-            return self._icon_for_entry(entry)
+        if role == Qt.ItemDataRole.DecorationRole:
+            if col == _COL_NAME:
+                return self._icon_for_entry(entry)
+            return None
 
         if role == Qt.ItemDataRole.ForegroundRole:
-            path = str(entry.path)
-            if path in self._selected:
-                return QColor("#FFD700")
+            if entry.full_path in self._selected:
+                return look.marked_fg
             if entry.is_parent:
-                return QColor("#AAAAAA")
+                return look.parent
             if entry.is_hidden:
-                return QColor("#888888")
-            if entry.is_dir:
-                return QColor("#6AB0DE")
+                return look.hidden
+            if entry.is_symlink:
+                return look.link
             return None
 
         if role == Qt.ItemDataRole.BackgroundRole:
-            path = str(entry.path)
-            if path in self._selected:
-                return QColor("#3A2800")
+            if entry.full_path in self._selected:
+                return look.marked_bg
             return None
 
         if role == Qt.ItemDataRole.FontRole:
-            if entry.is_dir and not entry.is_parent:
-                f = QFont()
-                f.setBold(True)
-                return f
-            return None
+            if entry.full_path in self._selected:
+                return look.marked
+            if entry.is_parent:
+                return None
+            if entry.is_dir:
+                return look.bold
+            if entry.is_symlink:
+                return look.italic
+            return look.file
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if col == _COL_SIZE:
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        if role == Qt.ItemDataRole.ToolTipRole and col == _COL_NAME:
+            state = vcs_state_of(entry.vcs_state) if entry.vcs_type else None
+            tip = entry.full_path
+            if state:
+                tip += f"\n{entry.vcs_type}: {state}"
+            if entry.target:
+                tip += f"\n→ {entry.target}"
+            return tip
+
+        if role == Qt.ItemDataRole.EditRole and col == _COL_NAME:
+            return entry.name
+
         if role == Qt.ItemDataRole.UserRole:
             return entry
 
         return None
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        base = super().flags(index)
+        entry = self.get_entry(index.row()) if index.isValid() else None
+        if entry is not None and index.column() == _COL_NAME and not entry.is_parent:
+            return base | Qt.ItemFlag.ItemIsEditable
+        return base
+
+    def setData(self, index: QModelIndex, value, role: int = Qt.ItemDataRole.EditRole) -> bool:  # noqa: N802
+        if role != Qt.ItemDataRole.EditRole or index.column() != _COL_NAME:
+            return False
+        entry = self.get_entry(index.row())
+        new_name = str(value).strip()
+        if entry is None or entry.is_parent or not new_name or new_name == entry.name:
+            return False
+        if any(ch in new_name for ch in INVALID_NAME_CHARS):
+            return False
+        self.rename_requested.emit(entry, new_name)
+        return True
 
     def _display(self, entry: FileEntry, col: int) -> str:
         if col == _COL_NAME:
@@ -156,67 +295,101 @@ class FileTableModel(QAbstractTableModel):
         if col == _COL_EXT:
             return entry.extension if not entry.is_dir else ""
         if col == _COL_SIZE:
-            return entry.size_display
+            return "" if entry.is_parent else entry.size_display
         if col == _COL_DATE:
-            return entry.modified_display
+            return "" if entry.is_parent else entry.modified_display
         if col == _COL_ATTR:
-            return entry.attributes_display
+            return "" if entry.is_parent else entry.attributes_display
         return ""
 
-    def _icon_for_entry(self, entry: FileEntry) -> QIcon | None:
-        key = entry.icon_key or f"{entry.path.as_posix()}|{entry.vcs_type or ''}|{entry.vcs_state or ''}"
-        entry.icon_key = key
-        if key in self._icon_cache:
-            return self._icon_cache[key]
+    # ------------------------------------------------------------------ icons
 
-        qfi = QFileInfo(str(entry.path))
-        icon = _ICON_PROVIDER.icon(qfi)
-        if icon.isNull():
-            icon = QIcon()
-
-        if entry.vcs_type:
-            icon = self._overlay_vcs_badge(icon, entry.vcs_type)
-
-        self._icon_cache[key] = icon
+    def _base_icon(self, entry: FileEntry) -> QIcon:
+        if entry.is_parent:
+            return self._parent_icon
+        cls = FileTableModel
+        if entry.is_dir:
+            if cls._folder_icon is None:
+                cls._folder_icon = cls._prov().icon(QFileIconProvider.IconType.Folder)
+            return cls._folder_icon
+        ext = entry.extension.lower()
+        if ext in _PER_FILE_ICON_EXT:
+            key = entry.full_path
+            icon = self._path_icons.get(key)
+            if icon is None:
+                icon = cls._prov().icon(QFileInfo(entry.full_path))
+                self._path_icons[key] = icon
+            return icon
+        icon = cls._ext_icons.get(ext)
+        if icon is None:
+            icon = cls._prov().icon(QFileInfo(entry.full_path))
+            if icon.isNull():
+                icon = icons.icon("file")
+            cls._ext_icons[ext] = icon
         return icon
 
-    def _overlay_vcs_badge(self, icon: QIcon, vcs_type: str) -> QIcon:
-        pix = icon.pixmap(16, 16)
+    def _icon_for_entry(self, entry: FileEntry) -> QIcon:
+        icon = self._base_icon(entry)
+        state = vcs_state_of(entry.vcs_state) if entry.vcs_type else None
+        if not state or state in ("ignored",):
+            return icon
+        size = icons.logical_size()
+        ext = entry.extension.lower()
+        key = (entry.full_path if (entry.is_dir or ext in _PER_FILE_ICON_EXT) else ext, state, size)
+        badged = self._badged.get(key)
+        if badged is None:
+            badged = self._overlay_dot(icon, self._look.dot.get(state, self._look.parent), size)
+            self._badged[key] = badged
+        return badged
+
+    @staticmethod
+    def _overlay_dot(icon: QIcon, color: QColor, size: int) -> QIcon:
+        """Semantic dot (state colour) in the bottom-right corner of the icon."""
+        app = QApplication.instance()
+        dpr = app.devicePixelRatio() if app else 1.0
+        pix = icon.pixmap(QSize(size, size))
         if pix.isNull():
             return icon
-
         over = QPixmap(pix)
+        over.setDevicePixelRatio(pix.devicePixelRatio() or dpr)
         painter = QPainter(over)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        if vcs_type == "git":
-            badge_color = QColor("#F05033")
-            letter = "G"
-        else:
-            badge_color = QColor("#0078D7")
-            letter = "S"
-        radius = 8
-        rect = over.rect().adjusted(over.width() - radius, over.height() - radius, 0, 0)
+        w = over.width() / over.devicePixelRatio()
+        d = max(5.0, w * 0.42)
+        rim = QColor(theme.current().card)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(badge_color)
-        painter.drawEllipse(rect)
-        painter.setPen(QColor("#FFFFFF"))
-        font = painter.font()
-        font.setPointSize(7)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, letter)
+        painter.setBrush(rim)
+        painter.drawEllipse(w - d - 0.5, w - d - 0.5, d + 1, d + 1)
+        painter.setBrush(color)
+        painter.drawEllipse(w - d + 0.5, w - d + 0.5, d - 1, d - 1)
         painter.end()
         return QIcon(over)
 
 
+class _NameDelegate(QStyledItemDelegate):
+    """Editor for in-place rename: pre-selects the stem, not the extension."""
+
+    def setEditorData(self, editor, index) -> None:  # noqa: N802
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            name = editor.text()
+            entry = index.data(Qt.ItemDataRole.UserRole)
+            stem_len = len(name)
+            if entry is not None and not entry.is_dir and "." in name.lstrip("."):
+                stem_len = len(name.rsplit(".", 1)[0])
+            QTimer.singleShot(0, lambda: editor.setSelection(0, stem_len))
+
+
 class FileTableView(QTableView):
-    """QTableView configured for file listing."""
+    """QTableView configured for a file listing (keyboard-first)."""
 
     entry_activated = Signal(object)   # FileEntry
     space_pressed = Signal(object)     # FileEntry – toggle selection
+    sort_requested = Signal(object)    # SortField (header click)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setObjectName("fileTable")
         self.setModel(FileTableModel(self))
         self._type_ahead = ""
         self._type_ahead_timer = QTimer(self)
@@ -230,20 +403,50 @@ class FileTableView(QTableView):
         self.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.setShowGrid(False)
         self.setAlternatingRowColors(False)
-        self.verticalHeader().setVisible(False)
-        self.verticalHeader().setDefaultSectionSize(18)
+        self.setWordWrap(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.setVerticalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setFrameShape(QTableView.Shape.NoFrame)
+        self.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)   # only F2 / menu, never a slow click
+        self.setItemDelegateForColumn(_COL_NAME, _NameDelegate(self))
+        vh = self.verticalHeader()
+        vh.setVisible(False)
+        vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         hdr = self.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(1, 55)
-        self.setColumnWidth(2, 90)
-        self.setColumnWidth(3, 135)
-        self.setColumnWidth(4, 55)
+        hdr.setHighlightSections(False)
+        hdr.setSectionsClickable(True)
+        hdr.setStretchLastSection(False)
+        hdr.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Stretch)
+        for col in _COL_WIDTHS:
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        hdr.setMinimumSectionSize(theme.px(28))
+        hdr.sectionClicked.connect(self._on_header_clicked)
         self.doubleClicked.connect(self._on_double_click)
+        self.apply_metrics()
+
+    def apply_metrics(self) -> None:
+        """Row height, icon size and column widths follow the zoom factor."""
+        self.verticalHeader().setDefaultSectionSize(theme.px(theme.ROW_HEIGHT_DENSE))
+        self.setIconSize(icons.qsize())
+        for col, w in _COL_WIDTHS.items():
+            self.setColumnWidth(col, theme.px(w))
+        self.horizontalHeader().setMinimumSectionSize(theme.px(28))
+
+    def retheme(self) -> None:
+        self.apply_metrics()
+        self.file_model().retheme()
+        self._fit_columns()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_columns()
+
+    def _fit_columns(self) -> None:
+        """Narrow panel: drop Attr first, then Date, so Name keeps ~40 % of the width."""
+        w = self.viewport().width()
+        self.setColumnHidden(_COL_ATTR, w < theme.px(480))
+        self.setColumnHidden(_COL_DATE, w < theme.px(380))
 
     def file_model(self) -> FileTableModel:
         return self.model()  # type: ignore[return-value]
@@ -253,6 +456,28 @@ class FileTableView(QTableView):
         if not idx.isValid():
             return None
         return self.file_model().get_entry(idx.row())
+
+    def show_sort_indicator(self, field: SortField, descending: bool) -> None:
+        col = next((c for c, f in _COL_SORT.items() if f == field), _COL_NAME)
+        hdr = self.horizontalHeader()
+        hdr.setSortIndicatorShown(True)
+        hdr.setSortIndicator(col, Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder)
+
+    def start_rename(self) -> bool:
+        """F2: edit the name of the current entry in place."""
+        idx = self.currentIndex()
+        if not idx.isValid():
+            return False
+        idx = self.model().index(idx.row(), _COL_NAME)
+        if not (self.model().flags(idx) & Qt.ItemFlag.ItemIsEditable):
+            return False
+        self.edit(idx)
+        return True
+
+    def _on_header_clicked(self, section: int) -> None:
+        field = _COL_SORT.get(section)
+        if field is not None:
+            self.sort_requested.emit(field)
 
     def _on_double_click(self, index: QModelIndex) -> None:
         entry = self.file_model().get_entry(index.row())
@@ -268,22 +493,28 @@ class FileTableView(QTableView):
             return
         current_row = self.currentIndex().row()
         count = self.model().rowCount()
+        # first try the current row (the user is extending the prefix)
+        entry = self.file_model().get_entry(current_row)
+        if entry and entry.name.lower().startswith(prefix):
+            return
         for offset in range(1, count + 1):
             row = (current_row + offset) % count
             entry = self.file_model().get_entry(row)
             if entry and entry.name.lower().startswith(prefix):
-                idx = self.model().index(row, 0)
-                self.setCurrentIndex(idx)
+                self.setCurrentIndex(self.model().index(row, 0))
                 return
 
-    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+    def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         if key == Qt.Key.Key_Tab:
-            mw = QApplication.activeWindow()
+            mw = self.window()
             if hasattr(mw, "_switch_panel"):
                 mw._switch_panel()
             return
-        if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+        if key == Qt.Key.Key_F2:
+            self.start_rename()
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             entry = self.current_entry()
             if entry:
                 self.entry_activated.emit(entry)
@@ -292,13 +523,11 @@ class FileTableView(QTableView):
             entry = self.current_entry()
             if entry:
                 self.space_pressed.emit(entry)
-                # Move down one row
                 row = self.currentIndex().row()
                 next_idx = self.model().index(row + 1, 0)
                 if next_idx.isValid():
                     self.setCurrentIndex(next_idx)
             return
-
         if key == Qt.Key.Key_Home:
             first = self.model().index(0, 0)
             if first.isValid():
@@ -308,8 +537,7 @@ class FileTableView(QTableView):
         if key == Qt.Key.Key_End:
             last_row = self.model().rowCount() - 1
             if last_row >= 0:
-                last = self.model().index(last_row, 0)
-                self.setCurrentIndex(last)
+                self.setCurrentIndex(self.model().index(last_row, 0))
                 self.scrollToBottom()
             return
 

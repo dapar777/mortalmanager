@@ -7,9 +7,10 @@ import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QRunnable, QThreadPool, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QTextCursor
+from PySide6.QtGui import QColor, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.database.db import DatabaseManager
+from src.solarqt import theme
+from src.solarqt.widgets import IconButton
 
 
 # ------------------------------------------------------------------ runner
@@ -46,37 +49,24 @@ class _CmdRunner(QRunnable):
         self._cwd = cwd
 
     def run(self) -> None:  # called in thread pool
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             if self._shell_type == "PowerShell":
                 result = subprocess.run(
                     ["powershell.exe", "-NoProfile", "-Command", self._cmd],
-                    cwd=self._cwd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=30,
+                    cwd=self._cwd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30, creationflags=flags,
                 )
             elif self._shell_type == "Git Bash" and self._bash:
                 result = subprocess.run(
                     [self._bash, "-c", self._cmd],
-                    cwd=self._cwd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=30,
+                    cwd=self._cwd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30, creationflags=flags,
                 )
             else:  # CMD
                 result = subprocess.run(
-                    self._cmd,
-                    shell=True,
-                    cwd=self._cwd,
-                    capture_output=True,
-                    text=True,
-                    encoding="mbcs",
-                    errors="replace",
-                    timeout=30,
+                    self._cmd, shell=True, cwd=self._cwd, capture_output=True, text=True,
+                    encoding="mbcs", errors="replace", timeout=30, creationflags=flags,
                 )
             self.signals.finished.emit(result.stdout, result.stderr, result.returncode)
         except subprocess.TimeoutExpired:
@@ -88,13 +78,11 @@ class _CmdRunner(QRunnable):
 # ------------------------------------------------------------------ widget
 
 
-class EmbeddedTerminalWidget(QWidget):
+class EmbeddedTerminalWidget(QFrame):
     """Bottom-of-window terminal pane."""
 
     # Emitted when the user `cd`s to a new directory so panels can follow.
     cwd_changed = Signal(str)
-
-
 
     def __init__(
         self,
@@ -103,6 +91,7 @@ class EmbeddedTerminalWidget(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("terminalPane")
         self._db = db
         self._cwd = initial_cwd
         self._hist_idx = -1
@@ -126,84 +115,95 @@ class EmbeddedTerminalWidget(QWidget):
     def clear_output(self) -> None:
         self._output.clear()
 
-    def set_font_size(self, pt: int) -> None:
-        """Update monospace fonts when global zoom level changes."""
-        mono = QFont("Consolas", pt)
+    def retheme(self) -> None:
+        """Fonts follow the zoom factor; colours are taken per line from the theme."""
+        mono = theme.mono_font()
         self._output.setFont(mono)
         self._prompt_lbl.setFont(mono)
         self._input.setFont(mono)
+        self._row_layout.setSpacing(theme.px(6))
+        self._layout.setContentsMargins(theme.px(6), theme.px(4), theme.px(6), theme.px(4))
+
+    def set_font_size(self, pt: int) -> None:  # backwards compatibility
+        self.retheme()
 
     # ------------------------------------------------------------------ build
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 0, 2, 2)
-        layout.setSpacing(1)
+        layout.setContentsMargins(theme.px(6), theme.px(4), theme.px(6), theme.px(4))
+        layout.setSpacing(theme.px(4))
+        self._layout = layout
 
-        # Output pane
         self._output = QPlainTextEdit()
-        self._output.setObjectName("TerminalOutput")
+        self._output.setObjectName("terminalOutput")
         self._output.setReadOnly(True)
-        self._output.setFont(QFont("Consolas", 9))
         self._output.setMaximumBlockCount(3000)
+        self._output.setFrameShape(QFrame.Shape.NoFrame)
         layout.addWidget(self._output, stretch=1)
 
-        # Input row
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(4)
+        rl.setSpacing(theme.px(6))
+        self._row_layout = rl
 
         self._shell_combo = QComboBox()
         shells = ["CMD", "PowerShell"]
         if self._find_git_bash():
             shells.append("Git Bash")
         self._shell_combo.addItems(shells)
-        self._shell_combo.setMaximumWidth(100)
+        self._shell_combo.setToolTip("Shell used for commands")
         self._shell_combo.currentTextChanged.connect(self._on_shell_changed)
 
         self._prompt_lbl = QLabel()
-        self._prompt_lbl.setObjectName("TerminalPrompt")
-        self._prompt_lbl.setFont(QFont("Consolas", 9))
+        self._prompt_lbl.setObjectName("terminalPrompt")
         self._update_prompt()
 
         self._input = QLineEdit()
-        self._input.setObjectName("TerminalInput")
-        self._input.setFont(QFont("Consolas", 9))
-        self._input.setPlaceholderText("command…  ↑↓=history  Tab=complete")
+        self._input.setObjectName("terminalInput")
+        self._input.setPlaceholderText("command…   ↑↓ history   Tab complete   Ctrl+Up back to panel")
         self._input.returnPressed.connect(self._on_return)
         self._input.installEventFilter(self)
+
+        btn_clear = IconButton("trash", "Clear output (Ctrl+E)")
+        btn_clear.clicked.connect(self.clear_output)
 
         rl.addWidget(self._shell_combo)
         rl.addWidget(self._prompt_lbl)
         rl.addWidget(self._input, stretch=1)
+        rl.addWidget(btn_clear)
         layout.addWidget(row)
+        self.retheme()
 
     # ------------------------------------------------------------------ display
 
     def _print_welcome(self) -> None:
-        self._write(f"MortalManager Terminal  [{self.current_shell()}]", "#888888")
-        self._write(f"{self._cwd}", "#888888")
-        self._write("─" * 60, "#444444")
+        self._write(f"MortalManager terminal  [{self.current_shell()}]  {self._cwd}", "muted")
 
     def _update_prompt(self) -> None:
         p = Path(self._cwd)
         label = f"{p.drive}\\…\\{p.name}>" if len(str(p)) > 32 else f"{p}>"
         self._prompt_lbl.setText(label)
+        self._prompt_lbl.setToolTip(self._cwd)
 
     def _on_shell_changed(self, shell: str) -> None:
-        self._write(f"\n[{shell}]", "#888888")
+        self._write(f"[{shell}]", "muted")
         self._hist_idx = -1
 
-    def _write(self, text: str, color: str = "") -> None:
+    def _color(self, kind: str) -> QColor:
+        t = theme.current()
+        if kind == "muted":
+            return QColor(t.muted)
+        if kind in t.semantic_fg:
+            return QColor(t.semantic_fg[kind])
+        return QColor(t.text)
+
+    def _write(self, text: str, kind: str = "") -> None:
         cursor = self._output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = cursor.charFormat()
-        if color:
-            fmt.setForeground(QColor(color))
-        else:
-            light = self.palette().window().color().lightness() > 128
-            fmt.setForeground(QColor("#111111" if light else "#dcdcdc"))
+        fmt.setForeground(self._color(kind))
         cursor.setCharFormat(fmt)
         cursor.insertText(text + "\n")
         self._output.setTextCursor(cursor)
@@ -217,22 +217,20 @@ class EmbeddedTerminalWidget(QWidget):
             return
         self._input.clear()
         self._hist_idx = -1
-        self._write(f"{self._prompt_lbl.text()} {cmd}", "#88aaff")
+        self._write(f"{self._prompt_lbl.text()} {cmd}", "info")
 
-        # cd is handled locally – save to history first
         parts = cmd.split(None, 1)
         if parts[0].lower() in ("cd", "chdir"):
             self._db.add_command_history(cmd, self._cwd, self.current_shell())
-            self._handle_cd(
-                parts[1].strip().strip('"').strip("'") if len(parts) > 1 else ""
-            )
+            self._handle_cd(parts[1].strip().strip('"').strip("'") if len(parts) > 1 else "")
+            return
+        if parts[0].lower() in ("cls", "clear"):
+            self.clear_output()
             return
 
         shell = self.current_shell()
         self._db.add_command_history(cmd, self._cwd, shell)
-
-        bash = self._find_git_bash()
-        runner = _CmdRunner(cmd, shell, bash, self._cwd)
+        runner = _CmdRunner(cmd, shell, self._find_git_bash(), self._cwd)
         runner.signals.finished.connect(self._on_finished)
         runner.setAutoDelete(True)
         self._pool.start(runner)
@@ -240,34 +238,30 @@ class EmbeddedTerminalWidget(QWidget):
     def _handle_cd(self, target: str) -> None:
         if not target:
             return
-        new = (
-            Path(self._cwd) / target
-            if not Path(target).is_absolute()
-            else Path(target)
-        )
+        new = Path(self._cwd) / target if not Path(target).is_absolute() else Path(target)
         try:
             resolved = new.resolve()
             if resolved.is_dir():
                 self._cwd = str(resolved)
                 self._update_prompt()
-                self._write(f"  → {self._cwd}", "#88cc88")
+                self._write(f"  → {self._cwd}", "success")
                 self.cwd_changed.emit(self._cwd)
             else:
-                self._write(f"  Not a directory: {resolved}", "#ff8888")
+                self._write(f"  Not a directory: {resolved}", "danger")
         except Exception as exc:
-            self._write(f"  Error: {exc}", "#ff8888")
+            self._write(f"  Error: {exc}", "danger")
 
     def _on_finished(self, stdout: str, stderr: str, rc: int) -> None:
         if stdout.strip():
             self._write(stdout.rstrip())
         if stderr.strip():
-            self._write(stderr.rstrip(), "#ff8888")
+            self._write(stderr.rstrip(), "danger")
         if rc not in (0, -1):
-            self._write(f"  [exit {rc}]", "#ffaa44")
+            self._write(f"  [exit {rc}]", "warning")
 
     # ------------------------------------------------------------------ event filter
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore[override]
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         if obj is self._input and event.type() == QEvent.Type.KeyPress:
             key = event.key()
             if key == Qt.Key.Key_Up:
@@ -295,7 +289,7 @@ class EmbeddedTerminalWidget(QWidget):
             self._input.setText(text)
             self._input.setCursorPosition(len(text))
         except Exception as exc:
-            print(f"terminal hist error: {exc}")
+            self._write(f"history error: {exc}", "danger")
 
     def _tab_complete(self) -> None:
         import glob
@@ -305,23 +299,13 @@ class EmbeddedTerminalWidget(QWidget):
         before = text[:pos]
         ws = max(before.rfind(" ") + 1, before.rfind("\t") + 1)
         word = before[ws:].strip('"').strip("'")
-        pat = (
-            word + "*"
-            if Path(word).is_absolute()
-            else str(Path(self._cwd) / word) + "*"
-        )
-        matches = sorted(
-            glob.glob(pat), key=lambda p: (not Path(p).is_dir(), p.lower())
-        )
+        pat = word + "*" if Path(word).is_absolute() else str(Path(self._cwd) / word) + "*"
+        matches = sorted(glob.glob(pat), key=lambda p: (not Path(p).is_dir(), p.lower()))
         if not matches:
             return
         m = Path(matches[0])
         try:
-            rel = (
-                str(m.relative_to(self._cwd))
-                if not Path(word).is_absolute()
-                else str(m)
-            )
+            rel = str(m.relative_to(self._cwd)) if not Path(word).is_absolute() else str(m)
         except ValueError:
             rel = str(m)
         if m.is_dir():

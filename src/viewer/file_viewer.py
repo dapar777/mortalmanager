@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QKeySequence, QPixmap, QTextOption
+from PySide6.QtGui import QKeySequence, QPixmap, QTextOption
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from src.solarqt import icons, theme
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +60,7 @@ class HexView(QPlainTextEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("Consolas", 9))
+        self.setFont(theme.mono_font())
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
 
     def load_bytes(self, data: bytes) -> None:
@@ -120,9 +122,9 @@ class FileViewerWindow(QDialog):
         # Toolbar
         tb = QToolBar()
         tb.setMovable(False)
-        self._btn_text = tb.addAction("Text")
-        self._btn_hex = tb.addAction("Hex")
-        self._btn_image = tb.addAction("Image")
+        self._btn_text = tb.addAction(icons.icon("text"), "Text")
+        self._btn_hex = tb.addAction(icons.icon("hash"), "Hex")
+        self._btn_image = tb.addAction(icons.icon("eye"), "Image")
         self._btn_text.triggered.connect(lambda: self._tabs.setCurrentIndex(0))
         self._btn_hex.triggered.connect(lambda: self._tabs.setCurrentIndex(1))
         self._btn_image.triggered.connect(lambda: self._tabs.setCurrentIndex(2))
@@ -134,7 +136,7 @@ class FileViewerWindow(QDialog):
         # Text tab
         self._text_view = QPlainTextEdit()
         self._text_view.setReadOnly(True)
-        self._text_view.setFont(QFont("Consolas", 10))
+        self._text_view.setFont(theme.mono_font(10))
         self._text_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._tabs.addTab(self._text_view, "Text")
 

@@ -1,4 +1,14 @@
-"""Main application window."""
+"""Main application window.
+
+Layout (see solarqt MANUAL.md §8): menu bar · #headerBar (logo, name, drive
+bar, search / commands / theme) · vertical splitter (two PanelWidgets side by
+side + #fkeysBar | embedded terminal) · status bar (panel info left, zoom and
+free space right).
+
+Zoom: Ctrl+wheel / Ctrl+± / Ctrl+0 change one factor (theme.set_zoom) and
+re-apply the stylesheet; wheel notches are coalesced by a short timer so a
+fast scroll costs one re-style, not ten. The factor is persisted in config.
+"""
 
 from __future__ import annotations
 
@@ -9,152 +19,41 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QListWidget,
     QMainWindow,
-    QMenu,
-    QMenuBar,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QSplitter,
     QStatusBar,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
-from src.core.file_model import FileEntry, SortField, SortOrder
-from src.core.undo import UndoAction, UndoActionType, UndoManager
-from src.database.db import DatabaseManager
-from src.jobs.job import JobSpec, JobType
+from src.core.file_model import FileEntry
+from src.core.undo import UndoActionType, UndoManager
+from src.jobs.job import JobResult, JobSpec, JobStatus, JobType
 from src.jobs.job_queue import JobQueue
 from src.settings.config import ConfigManager
+from src.solarqt import icons, theme, widgets
+from src.solarqt.widgets import ActionButton, IconButton, Toast, VLine
+from .drive_bar import DriveBar
 from .panel import PanelWidget
 
 logger = logging.getLogger(__name__)
 
-
-class _CmdInputFilter(QObject):
-    """Event filter for the command bar – Tab=path completion, Up/Down=history."""
-
-    def __init__(self, cmd_input: QLineEdit, get_cwd, get_history) -> None:
-        super().__init__(cmd_input)
-        self._input = cmd_input
-        self._get_cwd = get_cwd
-        self._get_history = get_history
-        self._completions: list[str] = []
-        self._comp_idx: int = -1
-        self._comp_base: str = ""
-        self._hist_idx: int = -1
-        self._hist_saved: str = ""   # text before browsing history
-
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore[override]
-        if obj is self._input and event.type() == QEvent.Type.KeyPress:
-            try:
-                key = event.key()
-                if key == Qt.Key.Key_Tab:
-                    self._complete()
-                    return True
-                elif key == Qt.Key.Key_Up:
-                    self._hist_step(+1)
-                    return True
-                elif key == Qt.Key.Key_Down:
-                    self._hist_step(-1)
-                    return True
-                else:
-                    if key not in (Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt):
-                        self._completions = []
-                        self._comp_idx = -1
-                        self._hist_idx = -1
-            except Exception:
-                pass
-        return False
-
-    def _hist_step(self, direction: int) -> None:
-        """direction=+1 goes older, -1 goes newer."""
-        try:
-            history = self._get_history()
-            if not isinstance(history, list):
-                history = list(history)
-            if not history:
-                return
-            if self._hist_idx == -1:
-                self._hist_saved = self._input.text()
-            new_idx = self._hist_idx + direction
-            if new_idx < -1:
-                return
-            if new_idx >= len(history):
-                new_idx = len(history) - 1
-            self._hist_idx = new_idx
-            if self._hist_idx == -1:
-                self._input.setText(self._hist_saved)
-            else:
-                self._input.setText(str(history[self._hist_idx]))
-            self._input.setCursorPosition(len(self._input.text()))
-        except Exception as exc:
-            print(f"History navigation error: {exc}")
-
-    def _complete(self) -> None:
-        import glob
-        text = self._input.text()
-        cursor = self._input.cursorPosition()
-        before = text[:cursor]
-
-        word_start = 0
-        for i in range(len(before) - 1, -1, -1):
-            if before[i] in (" ", "\t"):
-                word_start = i + 1
-                break
-        word = before[word_start:].strip('"').strip("'")
-
-        if not self._completions or self._comp_base != word:
-            self._comp_base = word
-            cwd = self._get_cwd()
-            if Path(word).is_absolute() or (len(word) >= 2 and word[1] == ":"):
-                pattern = word + "*"
-                relative_to = None
-            else:
-                pattern = str(Path(cwd) / word) + "*"
-                relative_to = cwd
-            matches = sorted(
-                glob.glob(pattern),
-                key=lambda p: (not Path(p).is_dir(), p.lower()),
-            )
-            self._completions = []
-            for m in matches:
-                p = Path(m)
-                if relative_to:
-                    try:
-                        rel = str(p.relative_to(relative_to))
-                    except ValueError:
-                        rel = m
-                else:
-                    rel = m
-                sep = "\\" if p.is_dir() else ""
-                self._completions.append(rel + sep)
-            self._comp_idx = -1
-
-        if not self._completions:
-            return
-        self._comp_idx = (self._comp_idx + 1) % len(self._completions)
-        completion = self._completions[self._comp_idx]
-        after = text[cursor:]
-        self._input.setText(text[:word_start] + completion + after)
-        self._input.setCursorPosition(word_start + len(completion))
+_ASSETS = Path(__file__).resolve().parent.parent.parent / "assets" / "icons"
 
 
 class MainWindow(QMainWindow):
     """The main dual-pane file manager window."""
+
+    zoom_changed = Signal(float)
 
     def __init__(self, event_loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
@@ -162,166 +61,268 @@ class MainWindow(QMainWindow):
         self._cfg = ConfigManager.get_instance()
         self._job_queue = JobQueue(self)
         self._job_queue.set_event_loop(event_loop)
+        self._job_specs: dict[str, JobSpec] = {}
+        self._job_queue.job_finished.connect(self._on_job_finished)
+        self._job_queue.job_failed.connect(self._on_job_failed)
         self._undo = UndoManager()
         self._active_panel: str = self._cfg.get("active_panel", "left") or "left"
+        self._compact = False
 
-        self._zoom_level: int = 0
+        # zoom: the first wheel notch applies immediately, further notches that
+        # arrive while a re-style is fresh are merged into one later apply
+        # (a re-style of the whole window costs ~150-300 ms)
+        self._zoom_pending: float | None = None
+        self._zoom_timer = QTimer(self)
+        self._zoom_timer.setSingleShot(True)
+        self._zoom_timer.setInterval(220)
+        self._zoom_timer.timeout.connect(self._flush_zoom)
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self._cfg.save)
 
         self._build_ui()
         self._build_menus()
         self._build_shortcuts()
         self._restore_geometry()
+        self._update_zoom_label()
 
         # Global event filter for Ctrl+Wheel zoom
         QApplication.instance().installEventFilter(self)
 
-        # Status update timer
-        self._status_timer = QTimer(self)
-        self._status_timer.timeout.connect(self._update_drive_status)
-        self._status_timer.start(5000)
-        self._update_drive_status()
-
     # ------------------------------------------------------------------ UI build
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("MortalManager – Advanced Dual Pane File Manager")
-        self.setMinimumSize(800, 500)
+        self.setWindowTitle("MortalManager")
+        self.setMinimumSize(theme.MIN_WINDOW_WIDTH, 360)
 
-        # Central widget
         central = QWidget()
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # Drive bar
-        self._drive_bar = self._build_drive_bar()
-        root_layout.addWidget(self._drive_bar)
+        root_layout.addWidget(self._build_header())
 
-        # Main splitter (left | right panel)
+        # Panels
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-
+        self._splitter.setChildrenCollapsible(False)
         home = str(Path.home())
         self._left_panel = PanelWidget(home, "left", self)
         self._right_panel = PanelWidget(home, "right", self)
-
-        self._left_panel.request_focus.connect(lambda: self._set_active("left"))
-        self._right_panel.request_focus.connect(lambda: self._set_active("right"))
-        self._left_panel.entry_activated.connect(self._on_entry_open)
-        self._right_panel.entry_activated.connect(self._on_entry_open)
-        self._left_panel.path_changed.connect(self._on_left_path_changed)
-        self._right_panel.path_changed.connect(self._on_right_path_changed)
-
+        for side, panel in (("left", self._left_panel), ("right", self._right_panel)):
+            panel.request_focus.connect(lambda s=side: self._set_active(s))
+            panel.entry_activated.connect(self._on_entry_open)
+            panel.path_changed.connect(lambda p, s=side: self._on_path_changed(s, p))
+            panel.status_info.connect(lambda info, s=side: self._on_status_info(s, info))
+            panel.favorites_requested.connect(lambda s=side: (self._set_active(s), self._open_favorites()))
+            panel.rename_requested.connect(self._on_inline_rename)
         self._splitter.addWidget(self._left_panel)
         self._splitter.addWidget(self._right_panel)
         self._splitter.setSizes([600, 600])
 
-        # F-keys bar
         self._fkeys_bar = self._build_fkeys_bar()
         self._fkeys_bar.setVisible(self._cfg.config.fkeys_bar_visible)
 
-        # Pack panels + fkeys into a container for the vertical splitter
         panels_container = QWidget()
         pc_layout = QVBoxLayout(panels_container)
-        pc_layout.setContentsMargins(0, 0, 0, 0)
-        pc_layout.setSpacing(0)
+        pc_layout.setContentsMargins(theme.px(8), theme.px(8), theme.px(8), 0)
+        pc_layout.setSpacing(theme.px(6))
         pc_layout.addWidget(self._splitter, stretch=1)
         pc_layout.addWidget(self._fkeys_bar)
+        self._panels_layout = pc_layout
 
-        # Embedded terminal (replaces command bar)
         from .terminal_widget import EmbeddedTerminalWidget
         self._terminal = EmbeddedTerminalWidget(home, self._cfg._db, self)
-        self._terminal.cwd_changed.connect(
-            lambda path: self._active_panel_widget.navigate_to(path)
-        )
+        self._terminal.cwd_changed.connect(lambda path: self._active_panel_widget.navigate_to(path))
+        self._terminal.setVisible(self._cfg.config.command_bar_visible)
 
-        # Vertical splitter – drag the handle to resize panels vs terminal
         self._v_splitter = QSplitter(Qt.Orientation.Vertical)
         self._v_splitter.addWidget(panels_container)
         self._v_splitter.addWidget(self._terminal)
-        self._v_splitter.setSizes([550, 150])
-
+        self._v_splitter.setStretchFactor(0, 1)
+        self._v_splitter.setStretchFactor(1, 0)
+        self._v_splitter.setSizes([560, 160])
         root_layout.addWidget(self._v_splitter, stretch=1)
 
-        # Qt status bar
+        # Status bar: message left, zoom + free space right
         self._statusbar = QStatusBar()
-        self._statusbar.setMaximumHeight(20)
+        self._statusbar.setSizeGripEnabled(False)
         self.setStatusBar(self._statusbar)
+        self._status_msg = QLabel("")
+        self._status_msg.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._status_msg.setMinimumWidth(theme.px(80))
+        self._statusbar.addWidget(self._status_msg, 1)
+        self._zoom_label = QLabel("")
+        self._zoom_label.setObjectName("faintLabel")
+        self._zoom_label.setToolTip("Zoom (Ctrl+wheel, Ctrl+0 resets)")
+        self._statusbar.addPermanentWidget(self._zoom_label)
+        self._free_label = QLabel("")
+        self._free_label.setObjectName("faintLabel")
+        self._statusbar.addPermanentWidget(self._free_label)
 
         self._set_active(self._active_panel)
         QTimer.singleShot(0, self._focus_active_panel)
 
-    def _build_drive_bar(self) -> QWidget:
-        w = QWidget()
-        w.setMaximumHeight(28)
-        layout = QHBoxLayout(w)
-        layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(2)
-        self._drive_buttons: list[QPushButton] = []
+    def _build_header(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("headerBar")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(theme.px(12), theme.px(6), theme.px(12), theme.px(6))
+        lay.setSpacing(theme.px(10))
+        self._header_layout = lay
 
+        # no logo / app name in the header: the window title and taskbar carry them
+        self._drive_bar = DriveBar()
+        self._drive_bar.drive_selected.connect(self._on_drive_clicked)
+        self._drive_bar.drives_updated.connect(lambda _d: self._update_free_label())
+        lay.addWidget(self._drive_bar)
+        lay.addStretch(1)
+
+        self._btn_search = IconButton("search", "Search (Alt+F7)", text="Search", framed=True)
+        self._btn_search.clicked.connect(self._open_search)
+        self._btn_commands = IconButton("command", "Command palette (Ctrl+Shift+P)", text="Commands", framed=True)
+        self._btn_commands.clicked.connect(self._open_command_palette)
+        self._btn_theme = IconButton("moon", "Toggle dark theme")
+        self._btn_theme.clicked.connect(self._toggle_theme)
+        lay.addWidget(self._btn_search)
+        lay.addWidget(self._btn_commands)
+        lay.addWidget(VLine())
+        lay.addWidget(self._btn_theme)
+        self._retheme_header()
+        return bar
+
+    def _retheme_header(self) -> None:
+        variant = "dark" if theme.is_dark() else "light"
+        from src.main import app_icon
+        icon = app_icon(variant)
+        self.setWindowIcon(icon)
+        QApplication.instance().setWindowIcon(icon)
+        self._apply_taskbar_identity(variant)
+        self._btn_theme.set_icon_name("sun" if theme.is_dark() else "moon")
+        self._btn_theme.setToolTip("Switch to light theme" if theme.is_dark() else "Switch to dark theme")
+        self._header_layout.setContentsMargins(theme.px(12), theme.px(6), theme.px(12), theme.px(6))
+        self._header_layout.setSpacing(theme.px(10))
+
+    def _apply_taskbar_identity(self, variant: str) -> None:
+        """Taskbar icon and grouping on Windows.
+
+        The author's venv runs on the Microsoft Store Python, which is an MSIX
+        package: for packaged processes the taskbar shows the *package* logo
+        (Python) and ignores the window icon. Setting AppUserModel properties
+        on the window itself (id, relaunch icon, display name) makes the shell
+        treat the window as its own app with our icon. Needs the HWND, so it is
+        applied once shown and again on every theme change (icon variant).
+        """
+        if sys.platform != "win32" or not self.isVisible():
+            return
         try:
-            from src.filesystem.drives import get_all_drives
-            drives = get_all_drives()
+            from win32com.propsys import propsys, pscon
         except Exception:
-            drives = []
+            return
+        ico = _ASSETS / f"mortalmanager-{variant}.ico"
+        try:
+            ps = propsys.SHGetPropertyStoreForWindow(int(self.winId()))
+            ps.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType("MortalManager.App.2"))
+            ps.SetValue(pscon.PKEY_AppUserModel_RelaunchDisplayNameResource, propsys.PROPVARIANTType("MortalManager"))
+            if ico.exists():
+                ps.SetValue(pscon.PKEY_AppUserModel_RelaunchIconResource, propsys.PROPVARIANTType(f"{ico},0"))
+            pyw = Path(sys.executable).with_name("pythonw.exe")
+            exe = pyw if pyw.exists() else Path(sys.executable)
+            ps.SetValue(pscon.PKEY_AppUserModel_RelaunchCommand,
+                        propsys.PROPVARIANTType(f'"{exe}" -m src.main'))
+            ps.Commit()
+        except Exception as exc:  # cosmetic – never block startup
+            logger.debug("taskbar identity not applied: %s", exc)
 
-        for drive in drives:
-            btn = QPushButton(drive.display_name)
-            btn.setMaximumHeight(22)
-            btn.setFont(QFont("Segoe UI", 8))
-            btn.setToolTip(
-                f"{drive.drive_type}  {drive.filesystem}\n"
-                f"Free: {drive.free_display} / {drive.total_display}"
-            )
-            root = drive.root
-            btn.clicked.connect(lambda checked, r=root: self._active_panel_widget.navigate_to(r))
-            layout.addWidget(btn)
-            self._drive_buttons.append(btn)
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not getattr(self, "_taskbar_done", False):
+            self._taskbar_done = True
+            self._apply_taskbar_identity("dark" if theme.is_dark() else "light")
 
-        layout.addStretch()
+    def _build_fkeys_bar(self) -> QWidget:
+        w = QFrame()
+        w.setObjectName("fkeysBar")
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(theme.px(6), theme.px(4), theme.px(6), theme.px(4))
+        layout.setSpacing(theme.px(4))
+        self._fkeys_layout = layout
+        self._fkeys_buttons: list[tuple[ActionButton, str, str]] = []
+        items: list[tuple[str, str, str, object] | None] = [
+            ("F3", "View", "eye", self._view_file),
+            ("F4", "Edit", "edit", self._edit_file),
+            ("F5", "Copy", "copy", self._copy_files),
+            ("F6", "Move", "arrow_right", self._move_files),
+            ("F7", "New folder", "folder_plus", self._mkdir),
+            ("F8", "Delete", "trash", self._delete_files),
+            None,
+            ("Ctrl+R", "Refresh", "refresh", lambda: self._active_panel_widget.refresh()),
+            ("Alt+F7", "Search", "search", self._open_search),
+            ("Ctrl+M", "Rename", "rename", self._bulk_rename),
+        ]
+        for item in items:
+            if item is None:
+                layout.addWidget(VLine())
+                continue
+            key, label, icon_name, handler = item
+            btn = ActionButton(f"{key}  {label}", icon_name, small=True)
+            btn.setToolTip(f"{label} ({key})")
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setMinimumWidth(theme.px(40))
+            btn.clicked.connect(handler)  # type: ignore[arg-type]
+            layout.addWidget(btn, 1)   # equal stretch: the bar spans the full width
+            self._fkeys_buttons.append((btn, key, label))
         return w
+
+    def _set_fkeys_compact(self, compact: bool) -> None:
+        """Narrow window: only the key on each button, label in the tooltip."""
+        for btn, key, label in self._fkeys_buttons:
+            btn.setText(key if compact else f"{key}  {label}")
 
     # ------------------------------------------------------------------ menus
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
 
-        # Files
         file_menu = mb.addMenu("&Files")
-        file_menu.addAction("&New File\tShift+F4", self._new_file)
-        file_menu.addAction("New &Folder\tF7", self._mkdir)
+        file_menu.addAction(icons.icon("file"), "&New File\tShift+F4", self._new_file)
+        file_menu.addAction(icons.icon("folder_plus"), "New &Folder\tF7", self._mkdir)
+        file_menu.addAction(icons.icon("rename"), "&Rename\tF2", self._rename_inline)
         file_menu.addSeparator()
-        file_menu.addAction("&Favorites\tCtrl+D", self._open_favorites)
+        file_menu.addAction(icons.icon("star_outline"), "&Favorites\tCtrl+D", self._open_favorites)
         file_menu.addSeparator()
-        file_menu.addAction("&Properties\tAlt+Enter", self._show_properties)
+        file_menu.addAction(icons.icon("info"), "&Properties\tAlt+Enter", self._show_properties)
         file_menu.addSeparator()
         file_menu.addAction("E&xit\tAlt+F4", self.close)
 
-        # Mark
         mark_menu = mb.addMenu("&Mark")
         mark_menu.addAction("Select &All\tCtrl+A / Num+*", self._active_panel_widget_select_all)
         mark_menu.addAction("&Deselect All\tNum+-", self._deselect_all)
         mark_menu.addAction("&Invert Selection\tNum+/", self._invert_selection)
         mark_menu.addSeparator()
-        mark_menu.addAction("Select by &Mask…", self._select_by_mask)
+        mark_menu.addAction(icons.icon("filter"), "Select by &Mask…", self._select_by_mask)
+        mark_menu.addSeparator()
+        mark_menu.addAction(icons.icon("clipboard"), "Copy &Names to Clipboard\tCtrl+Shift+C", self._copy_names)
+        mark_menu.addAction(icons.icon("clipboard"), "Copy Full &Paths to Clipboard\tCtrl+Alt+C", self._copy_paths)
 
-        # Commands
         cmd_menu = mb.addMenu("&Commands")
-        cmd_menu.addAction("&Search…\tAlt+F7", self._open_search)
-        cmd_menu.addAction("Bulk &Rename…\tCtrl+M", self._bulk_rename)
+        cmd_menu.addAction(icons.icon("search"), "&Search…\tAlt+F7", self._open_search)
+        cmd_menu.addAction(icons.icon("rename"), "Bulk &Rename…\tCtrl+M", self._bulk_rename)
         cmd_menu.addSeparator()
-        cmd_menu.addAction("Calculate Si&ze", self._calc_size)
-        cmd_menu.addAction("Compute &Hash…", self._compute_hash)
-        cmd_menu.addAction("Find &Duplicates…", self._find_duplicates)
+        cmd_menu.addAction(icons.icon("scale"), "Calculate Si&ze", self._calc_size)
+        cmd_menu.addAction(icons.icon("hash"), "Compute &Hash…", self._compute_hash)
+        cmd_menu.addAction(icons.icon("copy"), "Find &Duplicates…", self._find_duplicates)
         cmd_menu.addSeparator()
-        cmd_menu.addAction("Open &Terminal Here", self._open_terminal)
-        cmd_menu.addAction("Open as &Admin", self._relaunch_admin)
+        cmd_menu.addAction(icons.icon("terminal"), "Open &Terminal Here", self._open_terminal)
+        cmd_menu.addAction(icons.icon("shield"), "Open as &Admin", self._relaunch_admin)
+        cmd_menu.addSeparator()
+        cmd_menu.addAction(icons.icon("command"), "Command &Palette…\tCtrl+Shift+P", self._open_command_palette)
 
-        # Network
         net_menu = mb.addMenu("&Network")
-        net_menu.addAction("&FTP/SFTP Connect…", self._open_ftp)
+        net_menu.addAction(icons.icon("network"), "&FTP/SFTP Connect…", self._open_ftp)
 
-        # Show
         show_menu = mb.addMenu("&Show")
         self._act_hidden = show_menu.addAction("Show &Hidden Files\tCtrl+H")
         self._act_hidden.setCheckable(True)
@@ -331,63 +332,22 @@ class MainWindow(QMainWindow):
         self._act_toolbar.setCheckable(True)
         self._act_toolbar.setChecked(self._cfg.config.fkeys_bar_visible)
         self._act_toolbar.triggered.connect(self._toggle_toolbar)
-        self._act_cmdbar = show_menu.addAction("&Command Bar")
+        self._act_cmdbar = show_menu.addAction("&Terminal Pane")
         self._act_cmdbar.setCheckable(True)
-        self._act_cmdbar.setChecked(True)
+        self._act_cmdbar.setChecked(self._cfg.config.command_bar_visible)
         self._act_cmdbar.triggered.connect(self._toggle_cmdbar)
         show_menu.addSeparator()
-        show_menu.addAction("Zoom &In\tCtrl++", lambda: self._apply_zoom(+1))
-        show_menu.addAction("Zoom &Out\tCtrl+-", lambda: self._apply_zoom(-1))
+        show_menu.addAction(icons.icon("zoom_in"), "Zoom &In\tCtrl++", lambda: self._zoom_step(+1))
+        show_menu.addAction(icons.icon("zoom_out"), "Zoom &Out\tCtrl+-", lambda: self._zoom_step(-1))
         show_menu.addAction("Reset &Zoom\tCtrl+0", self._reset_zoom)
         show_menu.addSeparator()
-        self._act_light_theme = show_menu.addAction("&Light Theme")
-        self._act_light_theme.setCheckable(True)
-        self._act_light_theme.setChecked(self._cfg.config.theme == "light")
-        self._act_light_theme.triggered.connect(self._toggle_theme)
+        self._act_dark_theme = show_menu.addAction(icons.icon("moon"), "&Dark Theme")
+        self._act_dark_theme.setCheckable(True)
+        self._act_dark_theme.setChecked(self._cfg.config.theme == "dark")
+        self._act_dark_theme.triggered.connect(self._toggle_theme)
 
-        # Help
         help_menu = mb.addMenu("&Help")
-        help_menu.addAction("&About MortalManager", self._show_about)
-
-    def _build_toolbar(self) -> None:
-        """Legacy stub – F-keys are now in _build_fkeys_bar (inline widget)."""
-        pass
-
-    def _build_fkeys_bar(self) -> QWidget:
-        w = QWidget()
-        w.setMaximumHeight(26)
-        layout = QHBoxLayout(w)
-        layout.setContentsMargins(2, 1, 2, 1)
-        layout.setSpacing(2)
-        self._fkeys_buttons: list[QPushButton] = []
-        items: list[tuple[str, object] | None] = [
-            ("F3 View", self._view_file),
-            ("F4 Edit", self._edit_file),
-            ("F5 Copy", self._copy_files),
-            ("F6 Move", self._move_files),
-            ("F7 Mkdir", self._mkdir),
-            ("F8 Del", self._delete_files),
-            None,
-            ("Refresh", lambda: self._active_panel_widget.refresh()),
-            ("Search", self._open_search),
-            ("Rename+", self._bulk_rename),
-        ]
-        for item in items:
-            if item is None:
-                sep = QFrame()
-                sep.setFrameShape(QFrame.Shape.VLine)
-                sep.setMaximumHeight(20)
-                layout.addWidget(sep)
-            else:
-                label, handler = item
-                btn = QPushButton(label)
-                btn.setMaximumHeight(22)
-                btn.setFont(QFont("Segoe UI", 8))
-                btn.clicked.connect(handler)  # type: ignore[arg-type]
-                layout.addWidget(btn)
-                self._fkeys_buttons.append(btn)
-        layout.addStretch()
-        return w
+        help_menu.addAction(icons.icon("help"), "&About MortalManager", self._show_about)
 
     # ------------------------------------------------------------------ shortcuts
 
@@ -395,12 +355,15 @@ class MainWindow(QMainWindow):
         shortcuts = [
             ("F3",          self._view_file),
             ("F4",          self._edit_file),
+            ("Shift+F4",    self._new_file),
             ("F5",          self._copy_files),
             ("F6",          self._move_files),
             ("F7",          self._mkdir),
             ("F8",          self._delete_files),
+            ("Delete",      self._delete_files),
             ("Alt+F7",      self._open_search),
             ("Ctrl+M",      self._bulk_rename),
+            ("Shift+F6",    self._rename_inline),
             ("Ctrl+R",      lambda: self._active_panel_widget.refresh()),
             ("Alt+Return",  self._show_properties),
             ("Ctrl+H",      self._toggle_hidden),
@@ -417,60 +380,101 @@ class MainWindow(QMainWindow):
             ("Ctrl+Up",     self._focus_active_panel),
             ("Ctrl+Shift+P", self._open_command_palette),
             ("Ctrl+A",      self._active_panel_widget_select_all),
+            ("Ctrl+L",      self._focus_path),
+            ("Ctrl+Shift+C", self._copy_names),
+            ("Ctrl+Alt+C",  self._copy_paths),
+            ("Alt+Down",    lambda: self._active_panel_widget.show_history_menu()),
         ]
         for key, handler in shortcuts:
             sc = QShortcut(QKeySequence(key), self)
             sc.activated.connect(handler)
 
-        # Ctrl+E clears the embedded terminal output
         sc_clear = QShortcut(QKeySequence(self._cfg.config.cmd_expand_shortcut), self)
         sc_clear.activated.connect(self._terminal.clear_output)
 
-        # Zoom shortcuts
-        sc_zi = QShortcut(QKeySequence.StandardKey.ZoomIn, self)
-        sc_zi.activated.connect(lambda: self._apply_zoom(+1))
-        sc_zo = QShortcut(QKeySequence.StandardKey.ZoomOut, self)
-        sc_zo.activated.connect(lambda: self._apply_zoom(-1))
-        sc_zr = QShortcut(QKeySequence("Ctrl+0"), self)
-        sc_zr.activated.connect(self._reset_zoom)
+        for seq in (QKeySequence.StandardKey.ZoomIn, QKeySequence("Ctrl+="), QKeySequence("Ctrl+Plus")):
+            QShortcut(QKeySequence(seq), self).activated.connect(lambda: self._zoom_step(+1))
+        QShortcut(QKeySequence.StandardKey.ZoomOut, self).activated.connect(lambda: self._zoom_step(-1))
+        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(self._reset_zoom)
 
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # type: ignore[override]
-        if event.type() == QEvent.Type.Wheel:
-            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                delta = event.angleDelta().y()
-                if delta > 0:
-                    self._apply_zoom(+1)
-                elif delta < 0:
-                    self._apply_zoom(-1)
-                return True
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Wheel and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta:
+                self._zoom_step(1 if delta > 0 else -1)
+            return True
         return super().eventFilter(obj, event)
 
-    def focusNextPrevChild(self, next: bool) -> bool:  # type: ignore[override]
-        # Disable Tab/Shift+Tab focus cycling in the main window.
-        # Tab is handled by FileTableView (panel switch) and _CmdTabFilter (completion).
+    def focusNextPrevChild(self, next: bool) -> bool:  # noqa: N802
+        # Tab is the panel switch (FileTableView) – no focus cycling in the main window.
         return False
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._apply_compact(self.width() < theme.px(theme.HEADER_COMPACT_BELOW))
+
+    def _apply_compact(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self._btn_search.set_compact(compact)
+        self._btn_commands.set_compact(compact)
+        self._set_fkeys_compact(compact)
 
     # ------------------------------------------------------------------ zoom
 
-    def _apply_zoom(self, delta: int) -> None:
-        self._zoom_level = max(-5, min(10, self._zoom_level + delta))
-        self._refresh_zoom()
+    def _zoom_step(self, direction: int) -> None:
+        base = self._zoom_pending if self._zoom_pending is not None else theme.zoom()
+        self._zoom_pending = max(theme.ZOOM_MIN, min(theme.ZOOM_MAX, round(base + direction * theme.ZOOM_STEP, 2)))
+        if self._zoom_timer.isActive():
+            return          # a re-style just happened; merge into the next one
+        self._flush_zoom()
 
     def _reset_zoom(self) -> None:
-        self._zoom_level = 0
-        self._refresh_zoom()
+        self._zoom_pending = 1.0
+        self._zoom_timer.stop()
+        self._flush_zoom()
 
-    def _refresh_zoom(self) -> None:
-        from src.main import apply_theme
-        pt = max(6, 9 + self._zoom_level)
-        # Re-apply the entire QSS with the new pt baked in – this is the single
-        # authoritative source for font sizes across all widget types.
-        apply_theme(QApplication.instance(), self._cfg.config.theme, font_pt=pt)
-        # Also update the app-wide default for widgets not covered by QSS (e.g. OS dialogs)
-        QApplication.instance().setFont(QFont("Segoe UI", pt))
-        # Structural: table row height is not a font property in QSS
-        self._left_panel.set_font_pt(pt)
-        self._right_panel.set_font_pt(pt)
+    def _flush_zoom(self) -> None:
+        if self._zoom_pending is None:
+            return
+        factor = self._zoom_pending
+        self._zoom_pending = None
+        if abs(factor - theme.zoom()) < 1e-6:
+            return
+        self._apply_zoom(factor)
+        self._zoom_timer.start()   # throttle window for notches that follow
+
+    def _apply_zoom(self, factor: float) -> None:
+        app = QApplication.instance()
+        self.setUpdatesEnabled(False)
+        try:
+            theme.apply(app, self._cfg.config.theme, zoom=factor)
+            self._retheme_all()
+        finally:
+            self.setUpdatesEnabled(True)
+        self._cfg.config.zoom = theme.zoom()
+        self._save_timer.start()
+        self._update_zoom_label()
+        self.zoom_changed.emit(theme.zoom())
+
+    def _update_zoom_label(self) -> None:
+        z = theme.zoom()
+        self._zoom_label.setText("" if abs(z - 1.0) < 1e-6 else f"{round(z * 100)} %")
+        self._zoom_label.setVisible(bool(self._zoom_label.text()))
+
+    def _retheme_all(self) -> None:
+        """Theme or zoom changed: re-style every widget that holds sizes/colours.
+        (Not named retheme(): retheme_tree would call it on the root and recurse.)"""
+        widgets.retheme_tree(self, repolish=False)
+        self._retheme_header()
+        self._panels_layout.setContentsMargins(theme.px(8), theme.px(8), theme.px(8), 0)
+        self._panels_layout.setSpacing(theme.px(6))
+        self._fkeys_layout.setContentsMargins(theme.px(6), theme.px(4), theme.px(6), theme.px(4))
+        self._fkeys_layout.setSpacing(theme.px(4))
+        self._status_msg.setMinimumWidth(theme.px(80))
+        self.menuBar().update()
+        self._apply_compact(self.width() < theme.px(theme.HEADER_COMPACT_BELOW))
 
     # ------------------------------------------------------------------ panel helpers
 
@@ -483,66 +487,253 @@ class MainWindow(QMainWindow):
         return self._right_panel if self._active_panel == "left" else self._left_panel
 
     def _set_active(self, side: str) -> None:
+        changed = side != self._active_panel
         self._active_panel = side
-        self._cfg.set("active_panel", side)
-        lw = self._left_panel
-        rw = self._right_panel
-        lw.setStyleSheet(
-            "PanelWidget { border: 2px solid #3A7BCA; }" if side == "left"
-            else "PanelWidget { border: 1px solid #444; }"
-        )
-        rw.setStyleSheet(
-            "PanelWidget { border: 2px solid #3A7BCA; }" if side == "right"
-            else "PanelWidget { border: 1px solid #444; }"
-        )
+        if changed:
+            self._cfg.set("active_panel", side)
+        self._left_panel.set_active(side == "left")
+        self._right_panel.set_active(side == "right")
         if hasattr(self, "_terminal"):
             self._terminal.set_cwd(self._active_panel_widget.current_path)
+        if hasattr(self, "_drive_bar"):
+            self._drive_bar.set_current_path(self._active_panel_widget.current_path)
+            self._update_free_label()
         if self.isVisible():
             self._active_panel_widget.give_focus()
 
     def _switch_panel(self) -> None:
-        new_side = "right" if self._active_panel == "left" else "left"
-        self._set_active(new_side)
+        self._set_active("right" if self._active_panel == "left" else "left")
         self._active_panel_widget.give_focus()
 
     def _focus_cmdline(self) -> None:
         self._terminal.give_focus()
 
     def _focus_active_panel(self) -> None:
-        """Ctrl+Up – return focus from command bar to the active panel."""
         self._active_panel_widget.give_focus()
 
+    def _focus_path(self) -> None:
+        edit = self._active_panel_widget._path_edit
+        edit.setFocus()
+        edit.selectAll()
+
+    def _on_drive_clicked(self, root: str) -> None:
+        self._active_panel_widget.navigate_to(root)
+        self._active_panel_widget.give_focus()
+
+    _PALETTE_RECENT_KEY = "palette_recent"
+
     def _open_command_palette(self) -> None:
-        dlg = _CommandPaletteDialog(self, self._build_palette_commands())
+        from .command_palette import RECENT_MAX, CommandPalette
+        try:
+            recent = [str(x) for x in (self._cfg.get(self._PALETTE_RECENT_KEY, []) or [])]
+        except Exception:
+            recent = []
+
+        def remember(path: str) -> None:
+            new = [path] + [r for r in recent if r != path]
+            self._cfg.set(self._PALETTE_RECENT_KEY, new[: RECENT_MAX * 2])
+
+        dlg = CommandPalette(self._build_palette_commands(), self, recent=recent, on_run=remember)
         dlg.exec()
 
-    def _build_palette_commands(self) -> list[tuple[str, object]]:
-        commands: list[tuple[str, object]] = [
-            ("Refresh", lambda: self._active_panel_widget.refresh()),
-            ("Open Terminal Here", self._open_terminal),
-            ("Open as Administrator", self._relaunch_admin),
-            ("Search…", self._open_search),
-            ("Bulk Rename…", self._bulk_rename),
-            ("Toggle Hidden Files", self._toggle_hidden),
-            ("Toggle F-Keys Bar", self._toggle_toolbar),
-            ("Toggle Command Bar", self._toggle_cmdbar),
-            ("Toggle Theme", self._toggle_theme),
-            ("Show Properties", self._show_properties),
+    def _build_palette_commands(self) -> list[dict]:
+        """Every user-facing command, for the command palette (multi-level).
+
+        Convention: a new feature is registered here first (category, label,
+        shortcut, run) – the menu bar and the F-key bar are subsets of this.
+        Entries with ``children`` (list or callable) open a sub-level.
+        """
+        from src.core.file_model import SortField, SortOrder
+
+        def e(category: str, label: str, run=None, shortcut: str = "", children=None,
+              icon: str | None = None, checked: bool = False) -> dict:
+            d = {"category": category, "label": label, "run": run, "shortcut": shortcut}
+            if children is not None:
+                d["children"] = children
+            if icon:
+                d["icon"] = icon
+            if checked:
+                d["checked"] = True
+            return d
+
+        p = self._active_panel_widget
+        other = self._inactive_panel_widget
+
+        # --- sort: field, then order (two levels)
+        fields = [
+            (SortField.NAME, "Name"), (SortField.EXTENSION, "Extension"), (SortField.SIZE, "Size"),
+            (SortField.MODIFIED, "Date modified"), (SortField.CREATED, "Date created"),
+            (SortField.ATTRIBUTES, "Attributes"),
         ]
 
-        entries = self._active_panel_widget.selected_entries()
-        if entries:
-            commands.extend([
-                ("Copy", self._copy_files),
-                ("Move", self._move_files),
-                ("Rename…", self._bulk_rename),
-                ("Delete", self._delete_files),
-                ("Show in Explorer", lambda: self._active_panel_widget._show_in_explorer(str(entries[0].path)) if hasattr(self._active_panel_widget, '_show_in_explorer') else None),
-                ("Compute Hash…", self._compute_hash),
-                ("Properties", self._show_properties),
-            ])
-        commands.append(("Windows Shell Menu…", lambda: self._active_panel_widget._show_windows_shell_menu([str(e.path) for e in entries] if entries else [self._active_panel_widget.current_path], self.mapToGlobal(self._active_panel_widget.rect().center()))))
-        return commands
+        def sort_children() -> list[dict]:
+            cur_field, cur_order = p.sort_state
+
+            def orders(field: SortField) -> list[dict]:
+                return [
+                    e("Order", "Ascending", lambda f=field: p.set_sort(f, SortOrder.ASCENDING), "",
+                      checked=(field == cur_field and cur_order == SortOrder.ASCENDING)),
+                    e("Order", "Descending", lambda f=field: p.set_sort(f, SortOrder.DESCENDING), "",
+                      checked=(field == cur_field and cur_order == SortOrder.DESCENDING)),
+                ]
+            return [e("Sort by", label, children=(lambda f=field: orders(f)), checked=(field == cur_field))
+                    for field, label in fields]
+
+        def drive_children() -> list[dict]:
+            cur = self._drive_bar.drive_for(p.current_path)
+            return [
+                e("Drive", f"{d.letter}:  {d.label or d.drive_type.title()}  ·  {d.free_display} free",
+                  lambda root=d.root: self._on_drive_clicked(root), icon="drive",
+                  checked=(cur is not None and d.root == cur.root))
+                for d in self._drive_bar.drives()
+            ]
+
+        def tab_children() -> list[dict]:
+            return [e("Tab", label, lambda i=i: p.switch_tab(i), checked=(i == p._current_tab_index))
+                    for i, label in enumerate(p.tab_labels())]
+
+        def favorite_children() -> list[dict]:
+            try:
+                favs = self._cfg._db.get_favorites()
+            except Exception:
+                favs = []
+            items = [e("Favourite", f"{f.alias or Path(f.path).name}  ·  {f.path}",
+                       lambda path=f.path: p.navigate_to(path), icon="star") for f in favs]
+            items.append(e("Favourite", "Add current folder to favourites…", self._open_favorites, "Ctrl+D", icon="plus"))
+            return items
+
+        def history_children() -> list[dict]:
+            return [e("History", path, lambda path=path: p.navigate_to(path), icon="folder")
+                    for path in p.history_paths()]
+
+        def zoom_children() -> list[dict]:
+            return [e("Zoom", f"{z} %", lambda z=z: self._apply_zoom(z / 100), "",
+                      checked=abs(theme.zoom() - z / 100) < 1e-6)
+                    for z in (70, 80, 90, 100, 110, 125, 150, 175, 200)]
+
+        def theme_children() -> list[dict]:
+            return [
+                e("Theme", "Light", lambda: self._set_theme("light"), icon="sun", checked=not theme.is_dark()),
+                e("Theme", "Dark", lambda: self._set_theme("dark"), icon="moon", checked=theme.is_dark()),
+            ]
+
+        def shell_children() -> list[dict]:
+            return [e("Shell", s, lambda s=s: self._terminal._shell_combo.setCurrentText(s),
+                      checked=(self._terminal.current_shell() == s))
+                    for s in [self._terminal._shell_combo.itemText(i) for i in range(self._terminal._shell_combo.count())]]
+
+        def swap_panels() -> None:
+            a, b = p.current_path, other.current_path
+            p.navigate_to(b)
+            other.navigate_to(a)
+
+        return [
+            # files
+            e("Files", "New file", self._new_file, "Shift+F4", icon="file"),
+            e("Files", "New folder", self._mkdir, "F7", icon="folder_plus"),
+            e("Files", "Rename", self._rename_inline, "F2", icon="rename"),
+            e("Files", "Bulk rename…", self._bulk_rename, "Ctrl+M", icon="rename"),
+            e("Files", "Copy", self._copy_files, "F5", icon="copy"),
+            e("Files", "Move", self._move_files, "F6", icon="arrow_right"),
+            e("Files", "Delete", self._delete_files, "F8", icon="trash"),
+            e("Files", "View", self._view_file, "F3", icon="eye"),
+            e("Files", "Edit", self._edit_file, "F4", icon="edit"),
+            e("Files", "Properties", self._show_properties, "Alt+Enter", icon="info"),
+            e("Files", "Compute hash…", self._compute_hash, icon="hash"),
+            e("Files", "Calculate size", self._calc_size, icon="scale"),
+            e("Files", "Find duplicates…", self._find_duplicates, icon="copy"),
+            e("Files", "Compress to ZIP…", lambda: p._compress_to_zip([x.full_path for x in p.selected_entries()]), icon="archive"),
+            e("Files", "Open with…", lambda: p._open_with(p.selected_entries()[0].full_path) if p.selected_entries() else None),
+            e("Files", "Run as administrator", lambda: p._run_as_admin(p.selected_entries()[0].full_path) if p.selected_entries() else None, icon="shield"),
+            # mark
+            e("Mark", "Select all", self._active_panel_widget_select_all, "Ctrl+A"),
+            e("Mark", "Deselect all", self._deselect_all, "Num -"),
+            e("Mark", "Invert selection", self._invert_selection, "Num /"),
+            e("Mark", "Select by mask…", self._select_by_mask, icon="filter"),
+            e("Mark", "Copy names to clipboard", self._copy_names, "Ctrl+Shift+C", icon="clipboard"),
+            e("Mark", "Copy full paths to clipboard", self._copy_paths, "Ctrl+Alt+C", icon="clipboard"),
+            # navigate
+            e("Navigate", "Sort by", children=sort_children, icon="sort"),
+            e("Navigate", "Go to drive", children=drive_children, icon="drive"),
+            e("Navigate", "Switch tab", children=tab_children, icon="columns"),
+            e("Navigate", "Favourites", children=favorite_children, icon="star_outline"),
+            e("Navigate", "History", children=history_children, shortcut="Alt+Down", icon="clock"),
+            e("Navigate", "Refresh", lambda: p.refresh(), "Ctrl+R", icon="refresh"),
+            e("Navigate", "Go up", lambda: p._go_up(), "Backspace", icon="arrow_up"),
+            e("Navigate", "Back", lambda: p._go_back(), "Alt+Left", icon="arrow_left"),
+            e("Navigate", "Forward", lambda: p._go_forward(), "Alt+Right", icon="arrow_right"),
+            e("Navigate", "Home folder", lambda: p.navigate_to(str(Path.home())), icon="home"),
+            e("Navigate", "Edit path", self._focus_path, "Ctrl+L"),
+            e("Navigate", "New tab", lambda: p._new_tab_from_current(), "Ctrl+T", icon="plus"),
+            e("Navigate", "Close tab", lambda: p.close_current_tab(), icon="close"),
+            e("Navigate", "Search…", self._open_search, "Alt+F7", icon="search"),
+            e("Navigate", "Show in Explorer", lambda: p._show_in_explorer(
+                p.selected_entries()[0].full_path if p.selected_entries() else p.current_path), icon="explorer"),
+            e("Navigate", "Windows shell menu", lambda: p._show_windows_shell_menu(
+                [x.full_path for x in p.selected_entries()] or [p.current_path],
+                self.mapToGlobal(p.rect().center()))),
+            # panels
+            e("Panels", "Switch active panel", self._switch_panel, "Tab", icon="columns"),
+            e("Panels", "Open this folder in the other panel", lambda: other.navigate_to(p.current_path)),
+            e("Panels", "Open the other panel's folder here", lambda: p.navigate_to(other.current_path)),
+            e("Panels", "Swap panels", swap_panels),
+            # tools
+            e("Tools", "Open terminal here", self._open_terminal, icon="terminal"),
+            e("Tools", "Focus embedded terminal", self._focus_cmdline, "Ctrl+Down", icon="terminal"),
+            e("Tools", "Clear embedded terminal", self._terminal.clear_output, self._cfg.config.cmd_expand_shortcut),
+            e("Tools", "Terminal shell", children=shell_children, icon="terminal"),
+            e("Tools", "Open as administrator", self._relaunch_admin, icon="shield"),
+            e("Tools", "FTP / SFTP connect…", self._open_ftp, icon="network"),
+            # show
+            e("Show", "Toggle hidden files", self._toggle_hidden, "Ctrl+H", icon="eye_off",
+              checked=p.show_hidden),
+            e("Show", "Toggle F-keys bar", lambda: (self._act_toolbar.toggle(), self._toggle_toolbar()),
+              checked=self._act_toolbar.isChecked()),
+            e("Show", "Toggle terminal pane", lambda: (self._act_cmdbar.toggle(), self._toggle_cmdbar()),
+              checked=self._act_cmdbar.isChecked()),
+            e("Show", "Theme", children=theme_children, icon="moon"),
+            e("Show", "Zoom", children=zoom_children, icon="zoom_in"),
+            e("Show", "Zoom in", lambda: self._zoom_step(+1), "Ctrl++", icon="zoom_in"),
+            e("Show", "Zoom out", lambda: self._zoom_step(-1), "Ctrl+-", icon="zoom_out"),
+            e("Show", "Reset zoom", self._reset_zoom, "Ctrl+0"),
+            # app
+            e("App", "About MortalManager", self._show_about, icon="help"),
+            e("App", "Exit", self.close, "Alt+F4"),
+        ]
+
+    # ------------------------------------------------------------------ jobs
+
+    def _submit(self, spec: JobSpec, message: str = "") -> str:
+        jid = self._job_queue.submit(spec)
+        self._job_specs[jid] = spec
+        if message:
+            self._statusbar.showMessage(message, 4000)
+        return jid
+
+    def _on_job_finished(self, jid: str, result: JobResult) -> None:
+        spec = self._job_specs.pop(jid, None)
+        self._left_panel.refresh()
+        self._right_panel.refresh()
+        if spec is None:
+            return
+        verb = {
+            JobType.COPY: "Copied", JobType.MOVE: "Moved", JobType.DELETE: "Deleted",
+            JobType.RENAME: "Renamed", JobType.MKDIR: "Created", JobType.EXTRACT: "Extracted",
+            JobType.COMPRESS: "Compressed",
+        }.get(spec.job_type)
+        if result.status == JobStatus.CANCELLED:
+            Toast.show_message(self, f"Cancelled: {spec.description}", "warning")
+        elif result.errors:
+            Toast.show_message(self, f"{spec.description}: {len(result.errors)} error(s)", "danger", 6000)
+        elif verb and spec.job_type != JobType.MKDIR:
+            n = result.files_processed or len(spec.sources)
+            Toast.show_message(self, f"{verb} {n} item(s)", "success")
+
+    def _on_job_failed(self, jid: str, error: str) -> None:
+        spec = self._job_specs.pop(jid, None)
+        desc = spec.description if spec else "Operation"
+        Toast.show_message(self, f"{desc} failed: {error}", "danger", 6000)
+        self._active_panel_widget.refresh()
 
     # ------------------------------------------------------------------ file operations
 
@@ -553,136 +744,115 @@ class MainWindow(QMainWindow):
         from src.viewer.file_viewer import FileViewerWindow
         for entry in entries[:3]:  # max 3 viewer windows
             if not entry.is_dir:
-                dlg = FileViewerWindow(str(entry.path), self)
-                dlg.show()
+                FileViewerWindow(entry.full_path, self).show()
 
     def _edit_file(self) -> None:
         entries = self._active_panel_widget.selected_entries()
-        paths = [str(e.path) for e in entries if not e.is_dir]
+        paths = [e.full_path for e in entries if not e.is_dir]
         if not paths:
             return
         from src.editor.file_editor import FileEditorWindow
-        dlg = FileEditorWindow(paths, self)
-        dlg.exec()
+        FileEditorWindow(paths, self).exec()
+
+    def _copy_or_move(self, job_type: JobType) -> None:
+        sources = self._active_panel_widget.selected_entries()
+        if not sources:
+            return
+        dest = self._inactive_panel_widget.current_path
+        from .dialogs.copy_dialog import CopyDialog
+        op = "copy" if job_type == JobType.COPY else "move"
+        dlg = CopyDialog([e.full_path for e in sources], dest, op, self)
+        if dlg.exec():
+            spec = JobSpec(
+                job_type=job_type,
+                sources=[e.full_path for e in sources],
+                destination=dlg.destination,
+                options={"overwrite": dlg.overwrite},
+            )
+            verb = "Copying" if job_type == JobType.COPY else "Moving"
+            self._submit(spec, f"{verb} {len(sources)} item(s)…")
+            self._active_panel_widget.deselect_all()
 
     def _copy_files(self) -> None:
-        sources = self._active_panel_widget.selected_entries()
-        if not sources:
-            return
-        dest = self._inactive_panel_widget.current_path
-        from .dialogs.copy_dialog import CopyDialog
-        dlg = CopyDialog(
-            [str(e.path) for e in sources], dest, "copy", self
-        )
-        if dlg.exec():
-            spec = JobSpec(
-                job_type=JobType.COPY,
-                sources=[str(e.path) for e in sources],
-                destination=dlg.destination,
-                options={"overwrite": dlg.overwrite},
-            )
-            jid = self._job_queue.submit(spec)
-            self._statusbar.showMessage(f"Copying {len(sources)} item(s)… (job {jid[:8]})")
+        self._copy_or_move(JobType.COPY)
 
     def _move_files(self) -> None:
-        sources = self._active_panel_widget.selected_entries()
-        if not sources:
-            return
-        dest = self._inactive_panel_widget.current_path
-        from .dialogs.copy_dialog import CopyDialog
-        dlg = CopyDialog(
-            [str(e.path) for e in sources], dest, "move", self
-        )
-        if dlg.exec():
-            spec = JobSpec(
-                job_type=JobType.MOVE,
-                sources=[str(e.path) for e in sources],
-                destination=dlg.destination,
-                options={"overwrite": dlg.overwrite},
-            )
-            jid = self._job_queue.submit(spec)
-            self._statusbar.showMessage(f"Moving {len(sources)} item(s)… (job {jid[:8]})")
+        self._copy_or_move(JobType.MOVE)
 
     def _delete_files(self) -> None:
         entries = self._active_panel_widget.selected_entries()
         if not entries:
             return
         use_trash = self._cfg.config.use_trash
-        confirm = self._cfg.config.confirm_delete
-
-        if confirm:
+        if self._cfg.config.confirm_delete:
             names = "\n".join(e.name for e in entries[:10])
             if len(entries) > 10:
                 names += f"\n… and {len(entries) - 10} more"
-            result = QMessageBox.question(
-                self,
-                "Confirm Delete",
-                f"Delete {len(entries)} item(s)?\n\n{names}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if result != QMessageBox.StandardButton.Yes:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.NoIcon)
+            box.setWindowTitle("Delete")
+            where = "to the Recycle Bin" if use_trash else "permanently"
+            box.setText(f"<b>Delete {len(entries)} item(s) {where}?</b>")
+            box.setInformativeText(names)
+            btn_delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+            btn_delete.setProperty("danger", "true")
+            btn_cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            btn_cancel.setProperty("quiet", "true")
+            box.setDefaultButton(btn_cancel)
+            box.setEscapeButton(btn_cancel)
+            box.exec()
+            if box.clickedButton() is not btn_delete:
                 return
 
         spec = JobSpec(
             job_type=JobType.DELETE,
-            sources=[str(e.path) for e in entries],
+            sources=[e.full_path for e in entries],
             options={"use_trash": use_trash},
         )
-        jid = self._job_queue.submit(spec)
-        self._job_queue.job_finished.connect(
-            lambda jid2, res: self._active_panel_widget.refresh()
-            if jid2 == jid else None
-        )
-        self._statusbar.showMessage(f"Deleting {len(entries)} item(s)…")
+        self._submit(spec, f"Deleting {len(entries)} item(s)…")
+        self._active_panel_widget.deselect_all()
 
     def _mkdir(self) -> None:
         from .dialogs.mkdir_dialog import MkdirDialog
         dlg = MkdirDialog(self._active_panel_widget.current_path, self)
         if dlg.exec():
-            spec = JobSpec(
-                job_type=JobType.MKDIR,
-                destination=dlg.new_path,
-            )
-            self._job_queue.submit(spec)
-            QTimer.singleShot(300, self._active_panel_widget.refresh)
+            self._active_panel_widget.set_pending_cursor(Path(dlg.new_path).name)
+            self._submit(JobSpec(job_type=JobType.MKDIR, destination=dlg.new_path))
 
     def _new_file(self) -> None:
         from .dialogs.mkdir_dialog import NewFileDialog
         dlg = NewFileDialog(self._active_panel_widget.current_path, self)
         if dlg.exec():
-            import asyncio as _asyncio
             from src.filesystem.local_fs import LocalFileSystemProvider
             fs = LocalFileSystemProvider()
-            _asyncio.ensure_future(
-                fs.create_file(dlg.new_path), loop=self._loop
-            )
+            asyncio.ensure_future(fs.create_file(dlg.new_path), loop=self._loop)
+            self._active_panel_widget.set_pending_cursor(Path(dlg.new_path).name)
             QTimer.singleShot(300, self._active_panel_widget.refresh)
 
     # ------------------------------------------------------------------ search / bulk rename
 
     def _open_search(self) -> None:
         from .dialogs.search_dialog import SearchDialog
-        dlg = SearchDialog(self._active_panel_widget.current_path, self)
-        dlg.exec()
+        SearchDialog(self._active_panel_widget.current_path, self).exec()
+
+    def _rename_inline(self) -> None:
+        self._active_panel_widget.start_rename()
+
+    def _on_inline_rename(self, old_path: str, new_path: str) -> None:
+        if Path(new_path).exists():
+            Toast.show_message(self, f"{Path(new_path).name} already exists", "warning")
+            return
+        self._submit(JobSpec(job_type=JobType.RENAME, sources=[old_path], destination=new_path))
 
     def _bulk_rename(self) -> None:
         entries = self._active_panel_widget.selected_entries()
         if not entries:
-            entries = [
-                e for e in self._active_panel_widget.all_entries()
-                if not e.is_dir and not e.is_parent
-            ]
+            entries = [e for e in self._active_panel_widget.all_entries() if not e.is_dir and not e.is_parent]
         from .dialogs.bulk_rename_dialog import BulkRenameDialog
         dlg = BulkRenameDialog(entries, self)
         if dlg.exec():
             for old_path, new_path in dlg.rename_pairs:
-                spec = JobSpec(
-                    job_type=JobType.RENAME,
-                    sources=[old_path],
-                    destination=new_path,
-                )
-                self._job_queue.submit(spec)
-            QTimer.singleShot(500, self._active_panel_widget.refresh)
+                self._submit(JobSpec(job_type=JobType.RENAME, sources=[old_path], destination=new_path))
 
     # ------------------------------------------------------------------ selection helpers
 
@@ -695,19 +865,27 @@ class MainWindow(QMainWindow):
     def _invert_selection(self) -> None:
         self._active_panel_widget.invert_selection()
 
+    def _copy_names(self) -> None:
+        self._copy_to_clipboard([e.name for e in self._active_panel_widget.selected_entries()], "name")
+
+    def _copy_paths(self) -> None:
+        self._copy_to_clipboard([e.full_path for e in self._active_panel_widget.selected_entries()], "path")
+
+    def _copy_to_clipboard(self, lines: list[str], what: str) -> None:
+        if not lines:
+            return
+        QApplication.clipboard().setText("\n".join(lines))
+        Toast.show_message(self, f"Copied {len(lines)} {what}(s)", "success", 1800)
+
     def _select_by_mask(self) -> None:
         from .dialogs.select_mask_dialog import SelectMaskDialog
         dlg = SelectMaskDialog(self)
         if dlg.exec():
-            self._active_panel_widget._current_tab.selection.select_by_mask(
-                self._active_panel_widget.all_entries(),
-                dlg.pattern,
-                dlg.use_regex,
-                dlg.case_sensitive,
+            panel = self._active_panel_widget
+            panel._current_tab.selection.select_by_mask(
+                panel.all_entries(), dlg.pattern, dlg.use_regex, dlg.case_sensitive,
             )
-            self._active_panel_widget._table.file_model().set_selected(
-                set(self._active_panel_widget._current_tab.selection.selected_paths)
-            )
+            panel._apply_selection()
 
     # ------------------------------------------------------------------ misc commands
 
@@ -716,192 +894,168 @@ class MainWindow(QMainWindow):
         if not entries:
             return
         from .dialogs.properties_dialog import PropertiesDialog
-        dlg = PropertiesDialog([str(e.path) for e in entries], self)
-        dlg.exec()
+        PropertiesDialog([e.full_path for e in entries], self).exec()
 
     def _compute_hash(self) -> None:
         entries = self._active_panel_widget.selected_entries()
-        paths = [str(e.path) for e in entries if not e.is_dir]
+        paths = [e.full_path for e in entries if not e.is_dir]
         if not paths:
             return
         from .dialogs.hash_dialog import HashDialog
-        dlg = HashDialog(paths, self)
-        dlg.exec()
+        HashDialog(paths, self).exec()
 
     def _calc_size(self) -> None:
         entries = self._active_panel_widget.selected_entries()
         if not entries:
             return
-        self._statusbar.showMessage("Calculating size…")
-        spec = JobSpec(
-            job_type=JobType.CALCULATE_SIZE,
-            sources=[str(e.path) for e in entries],
-        )
-        self._job_queue.submit(spec)
+        spec = JobSpec(job_type=JobType.CALCULATE_SIZE, sources=[e.full_path for e in entries])
+        self._submit(spec, "Calculating size…")
 
     def _find_duplicates(self) -> None:
         from .dialogs.duplicates_dialog import DuplicatesDialog
-        dlg = DuplicatesDialog(self._active_panel_widget.current_path, self)
-        dlg.exec()
+        DuplicatesDialog(self._active_panel_widget.current_path, self).exec()
 
     @staticmethod
     def _find_git_bash() -> str | None:
         """Find Git's bash.exe only – never WSL bash."""
-        candidates = [
+        for p in (
             r"C:\Program Files\Git\bin\bash.exe",
             r"C:\Program Files (x86)\Git\bin\bash.exe",
             r"C:\Program Files\Git\usr\bin\bash.exe",
-        ]
-        for p in candidates:
+        ):
             if os.path.isfile(p):
                 return p
-        return None  # do NOT fall back to shutil.which('bash') – that could be WSL
+        return None
 
     def _open_terminal(self) -> None:
         path = self._active_panel_widget.current_path
         shell = self._terminal.current_shell() if hasattr(self, "_terminal") else "PowerShell"
         try:
             if shell == "CMD":
-                subprocess.Popen(
-                    ["cmd.exe", "/K", f"cd /d \"{path}\""],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
+                subprocess.Popen(["cmd.exe", "/K", f'cd /d "{path}"'], creationflags=subprocess.CREATE_NEW_CONSOLE)
             elif shell == "Git Bash":
                 bash = self._find_git_bash()
                 if bash:
-                    subprocess.Popen(
-                        [bash, "--login", "-i"],
-                        cwd=path,
-                        creationflags=subprocess.CREATE_NEW_CONSOLE,
-                    )
+                    subprocess.Popen([bash, "--login", "-i"], cwd=path, creationflags=subprocess.CREATE_NEW_CONSOLE)
                 else:
-                    QMessageBox.warning(self, "Git Bash", "Git Bash not found.")
-            else:  # PowerShell
-                subprocess.Popen(
-                    ["powershell.exe", "-NoExit", "-Command", f"cd '{path}'"],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
+                    Toast.show_message(self, "Git Bash not found.", "warning")
+            else:
+                subprocess.Popen(["powershell.exe", "-NoExit", "-Command", f"cd '{path}'"],
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
         except Exception as exc:
             QMessageBox.warning(self, "Error", str(exc))
 
     def _open_ftp(self) -> None:
         from .dialogs.ftp_dialog import FtpDialog
-        dlg = FtpDialog(self)
-        dlg.exec()
+        FtpDialog(self).exec()
 
     def _toggle_hidden(self) -> None:
         self._left_panel.toggle_hidden()
         self._right_panel.toggle_hidden()
+        self._act_hidden.setChecked(self._active_panel_widget.show_hidden)
 
     def _toggle_toolbar(self) -> None:
         visible = self._act_toolbar.isChecked()
         self._fkeys_bar.setVisible(visible)
         self._cfg.config.fkeys_bar_visible = visible
-        self._cfg.save()
-
-    def _toggle_theme(self) -> None:
-        from PySide6.QtWidgets import QApplication
-        from src.main import apply_theme
-        cfg = self._cfg.config
-        cfg.theme = "light" if self._act_light_theme.isChecked() else "dark"
-        self._cfg.save()
-        apply_theme(QApplication.instance(), cfg.theme)
-
-    def _open_favorites(self) -> None:
-        from PySide6.QtCore import QPoint
-        from .dialogs.favorites_dialog import FavoritesPickerDialog
-        panel = self._active_panel_widget
-        dlg = FavoritesPickerDialog(
-            self._cfg._db,
-            panel.current_path,
-            self,
-        )
-        dlg.navigated.connect(panel.navigate_to)
-        # Position dialog centred horizontally over the active panel
-        dlg.adjustSize()
-        panel_geo = panel.rect()
-        global_top_left = panel.mapToGlobal(panel_geo.topLeft())
-        dlg_x = global_top_left.x() + (panel_geo.width() - dlg.width()) // 2
-        dlg_y = global_top_left.y() + max(0, (panel_geo.height() - dlg.height()) // 3)
-        dlg.move(dlg_x, dlg_y)
-        dlg.exec()
+        self._save_timer.start()
 
     def _toggle_cmdbar(self) -> None:
-        self._terminal.setVisible(self._act_cmdbar.isChecked())
+        visible = self._act_cmdbar.isChecked()
+        self._terminal.setVisible(visible)
+        self._cfg.config.command_bar_visible = visible
+        self._save_timer.start()
+
+    def _toggle_theme(self) -> None:
+        self._set_theme("light" if self._cfg.config.theme == "dark" else "dark")
+
+    def _set_theme(self, name: str) -> None:
+        cfg = self._cfg.config
+        if name == cfg.theme:
+            return
+        cfg.theme = name
+        self._act_dark_theme.setChecked(cfg.theme == "dark")
+        app = QApplication.instance()
+        self.setUpdatesEnabled(False)
+        try:
+            theme.apply(app, cfg.theme)
+            self._retheme_all()
+        finally:
+            self.setUpdatesEnabled(True)
+        self._save_timer.start()
+
+    def _open_favorites(self) -> None:
+        from .dialogs.favorites_dialog import FavoritesPickerDialog
+        panel = self._active_panel_widget
+        dlg = FavoritesPickerDialog(self._cfg._db, panel.current_path, self)
+        dlg.navigated.connect(panel.navigate_to)
+        dlg.adjustSize()
+        panel_geo = panel.rect()
+        top_left = panel.mapToGlobal(panel_geo.topLeft())
+        dlg.move(top_left.x() + (panel_geo.width() - dlg.width()) // 2,
+                 top_left.y() + max(0, (panel_geo.height() - dlg.height()) // 3))
+        dlg.exec()
 
     def _undo_action(self) -> None:
         action = self._undo.pop_undo()
         if not action:
+            Toast.show_message(self, "Nothing to undo", None, 1500)
             return
-        # Re-apply inverse operation
         if action.action_type == UndoActionType.MOVE:
             for new_path, old_path in action.pairs:
-                spec = JobSpec(
-                    job_type=JobType.MOVE,
-                    sources=[new_path],
-                    destination=str(Path(old_path).parent),
-                )
-                self._job_queue.submit(spec)
+                self._submit(JobSpec(job_type=JobType.MOVE, sources=[new_path],
+                                     destination=str(Path(old_path).parent)))
         elif action.action_type == UndoActionType.RENAME:
             for new_path, old_path in action.pairs:
-                spec = JobSpec(
-                    job_type=JobType.RENAME,
-                    sources=[new_path],
-                    destination=old_path,
-                )
-                self._job_queue.submit(spec)
+                self._submit(JobSpec(job_type=JobType.RENAME, sources=[new_path], destination=old_path))
 
     def _relaunch_admin(self) -> None:
         import ctypes
         if ctypes.windll.shell32.IsUserAnAdmin():  # type: ignore[attr-defined]
-            QMessageBox.information(self, "Admin", "Already running as administrator.")
+            Toast.show_message(self, "Already running as administrator.", "info")
         else:
             ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
                 None, "runas", sys.executable, " ".join(sys.argv), None, 1
             )
 
-    # ------------------------------------------------------------------ path change handlers
+    # ------------------------------------------------------------------ path / status handlers
 
-    def _on_left_path_changed(self, path: str) -> None:
-        self._statusbar.showMessage(path)
-        if self._active_panel == "left" and hasattr(self, "_terminal"):
-            self._terminal.set_cwd(path)
+    def _on_path_changed(self, side: str, path: str) -> None:
+        if side == self._active_panel:
+            if hasattr(self, "_terminal"):
+                self._terminal.set_cwd(path)
+            if hasattr(self, "_drive_bar"):
+                self._drive_bar.set_current_path(path)
+                self._update_free_label()
 
-    def _on_right_path_changed(self, path: str) -> None:
-        self._statusbar.showMessage(path)
-        if self._active_panel == "right" and hasattr(self, "_terminal"):
-            self._terminal.set_cwd(path)
+    def _on_status_info(self, side: str, info: str) -> None:
+        if side == self._active_panel:
+            self._status_msg.setText(info)
+
+    def _update_free_label(self) -> None:
+        if not hasattr(self, "_drive_bar"):
+            return
+        d = self._drive_bar.drive_for(self._active_panel_widget.current_path)
+        self._free_label.setText(DriveBar.free_text(d))
 
     def _on_entry_open(self, entry: FileEntry) -> None:
-        """Open a non-directory file with appropriate viewer/editor."""
-        path = str(entry.path)
+        """Open a file: viewer for known text/images, otherwise the shell default."""
+        from src.viewer.file_viewer import _IMAGE_EXTENSIONS, _TEXT_EXTENSIONS, FileViewerWindow
         ext = entry.extension.lower()
-        # Open in viewer
-        from src.viewer.file_viewer import FileViewerWindow
-        dlg = FileViewerWindow(path, self)
-        dlg.show()
-
-    # ------------------------------------------------------------------ status
-
-    def _update_drive_status(self) -> None:
-        try:
-            import psutil
-            disks = psutil.disk_usage("/")
-            self._statusbar.showMessage(
-                f"/ Free: {disks.free // (1024**3)} GB"
-            )
-        except Exception:
-            pass
+        if ext in _TEXT_EXTENSIONS or ext in _IMAGE_EXTENSIONS:
+            FileViewerWindow(entry.full_path, self).show()
+        else:
+            self._active_panel_widget._open_default(entry.full_path)
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "About MortalManager",
-            "MortalManager – Advanced Dual Pane File Manager\n"
-            "Version 1.0.0\n\n"
-            "Built with Python 3.13 + PySide6\n"
-            "Inspired by Total Commander",
-        )
+        box = QMessageBox(self)
+        box.setWindowTitle("About MortalManager")
+        variant = "dark" if theme.is_dark() else "light"
+        box.setIconPixmap(QPixmap(str(_ASSETS / f"mortalmanager-{variant}-512.png")).scaled(
+            theme.px(64), theme.px(64), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        box.setText("<b>MortalManager</b><br>Dual pane file manager for Windows")
+        box.setInformativeText("Version 1.0.0 · Python + PySide6 · Solarized look (solarqt)\nInspired by Total Commander")
+        box.exec()
 
     # ------------------------------------------------------------------ geometry
 
@@ -911,63 +1065,13 @@ class MainWindow(QMainWindow):
         if cfg.window_maximized:
             self.showMaximized()
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
+    def closeEvent(self, event) -> None:  # noqa: N802
         cfg = self._cfg.config
         cfg.window_maximized = self.isMaximized()
         if not self.isMaximized():
             cfg.window_width = self.width()
             cfg.window_height = self.height()
+        cfg.zoom = theme.zoom()
         self._cfg.save()
         self._job_queue.deleteLater()
         event.accept()
-
-
-class _CommandPaletteDialog(QDialog):
-    def __init__(self, parent: QWidget, commands: list[tuple[str, object]]) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Command Palette")
-        self.setMinimumSize(520, 360)
-        self._commands = commands
-
-        layout = QVBoxLayout(self)
-        self._search = QLineEdit(self)
-        self._search.setPlaceholderText("Type a command…")
-        self._search.textChanged.connect(self._filter)
-        layout.addWidget(self._search)
-
-        self._list = QListWidget(self)
-        for name, _ in commands:
-            self._list.addItem(name)
-        self._list.itemActivated.connect(self._activate_current)
-        layout.addWidget(self._list)
-
-        self._search.setFocus()
-        if self._list.count() > 0:
-            self._list.setCurrentRow(0)
-
-    def _filter(self, text: str) -> None:
-        self._list.clear()
-        lower = text.lower()
-        for name, _ in self._commands:
-            if lower in name.lower():
-                self._list.addItem(name)
-        if self._list.count() > 0:
-            self._list.setCurrentRow(0)
-
-    def keyPressEvent(self, event) -> None:  # type: ignore[override]
-        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                self._activate_current()
-                return
-        super().keyPressEvent(event)
-
-    def _activate_current(self) -> None:
-        item = self._list.currentItem()
-        if not item:
-            return
-        name = item.text()
-        for cmd_name, handler in self._commands:
-            if cmd_name == name and callable(handler):
-                handler()
-                break
-        self.accept()

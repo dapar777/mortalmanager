@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.solarqt import theme
 from src.core.file_model import FileEntry, SearchQuery
 from src.filesystem.local_fs import LocalFileSystemProvider
 
@@ -129,7 +130,7 @@ class SearchDialog(QDialog):
 
         # Results
         self._results_list = QListWidget()
-        self._results_list.setFont(__import__("PySide6.QtGui", fromlist=["QFont"]).QFont("Consolas", 9))
+        self._results_list.setFont(theme.mono_font())
         self._results_list.itemDoubleClicked.connect(self._open_result)
         layout.addWidget(self._results_list, stretch=1)
 

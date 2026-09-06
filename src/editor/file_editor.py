@@ -11,7 +11,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QColor,
-    QFont,
     QKeySequence,
     QShortcut,
     QSyntaxHighlighter,
@@ -33,6 +32,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.solarqt import icons, theme
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,18 +52,21 @@ class _PythonHighlighter(QSyntaxHighlighter):
 
     def __init__(self, document: QTextDocument) -> None:
         super().__init__(document)
+        # Solarized code colours: keywords green, strings cyan, numbers magenta,
+        # comments in the theme's secondary text (readable in both themes)
         kw_fmt = QTextCharFormat()
-        kw_fmt.setForeground(QColor("#569CD6"))
+        kw_fmt.setForeground(QColor(theme.GREEN))
         kw_fmt.setFontWeight(700)
 
         str_fmt = QTextCharFormat()
-        str_fmt.setForeground(QColor("#CE9178"))
+        str_fmt.setForeground(QColor(theme.CYAN))
 
         cmt_fmt = QTextCharFormat()
-        cmt_fmt.setForeground(QColor("#6A9955"))
+        cmt_fmt.setForeground(QColor(theme.current().text2))
+        cmt_fmt.setFontItalic(True)
 
         num_fmt = QTextCharFormat()
-        num_fmt.setForeground(QColor("#B5CEA8"))
+        num_fmt.setForeground(QColor(theme.MAGENTA))
 
         self._rules: list[tuple[str, QTextCharFormat]] = [
             (r"#[^\n]*", cmt_fmt),
@@ -111,7 +115,7 @@ class _EditorTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._editor = QPlainTextEdit()
-        self._editor.setFont(QFont("Consolas", 10))
+        self._editor.setFont(theme.mono_font(10))
         self._editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._editor.document().contentsChanged.connect(self._on_changed)
         layout.addWidget(self._editor)
@@ -188,9 +192,9 @@ class FileEditorWindow(QDialog):
         # Toolbar
         tb = QToolBar()
         tb.setMovable(False)
-        self._act_save = tb.addAction("Save (Ctrl+S)")
-        self._act_save_all = tb.addAction("Save All")
-        self._act_close_tab = tb.addAction("Close Tab")
+        self._act_save = tb.addAction(icons.icon("save"), "Save (Ctrl+S)")
+        self._act_save_all = tb.addAction(icons.icon("download"), "Save All")
+        self._act_close_tab = tb.addAction(icons.icon("close"), "Close Tab")
         self._act_save.triggered.connect(self._save_current)
         self._act_save_all.triggered.connect(self._save_all)
         self._act_close_tab.triggered.connect(self._close_current_tab)
