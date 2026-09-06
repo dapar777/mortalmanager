@@ -32,6 +32,7 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Označení souboru | Mezerník, Ctrl+A, Num +/−/\* |
 | Kopírovat názvy / celé cesty do schránky | Ctrl+Shift+C / Ctrl+Alt+C (menu Mark) |
 | Historie procházení panelu | Alt+Down |
+| Rychlý filtr seznamu (jako v TC) | Ctrl+S nebo `*`, Esc zruší, Enter zpět do seznamu |
 | Kontextové menu | pravé tlačítko; nahoře sekce nejčastěji používaných položek |
 | Cesta / oblíbené / nový tab | Ctrl+L / Ctrl+D / Ctrl+T |
 | Terminál | Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat |

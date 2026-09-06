@@ -79,7 +79,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `status_info`, `request_focus`, `favorites_requested`. `FileTableModel` bere barvy z `_Look` (cache per téma),
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
-  úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). F2 / Shift+F6 = přejmenování v místě
+  úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). Ctrl+S nebo `*` (hlavní klávesnice; numerická `*` zůstává výběr) = rychlý filtr jako v TC: pole pod seznamem,
+  podřetězec nebo maska `*?`, Esc zruší, Enter vrátí fokus do seznamu s filtrem, šipky posouvají kurzor; filtr je
+  stav tabu (`_Tab.filter_text`), maže se při změně adresáře; `_unfiltered` drží plný výpis. F2 / Shift+F6 = přejmenování v místě
   (`FileTableModel.setData` → `rename_requested` → `MainWindow._on_inline_rename` → job RENAME; delegát předvybere
   jméno bez přípony), Ctrl+M = hromadné.
   Dlouhá menu jdou přes `panel.fit_menu_on_screen`, které při přetečení obrazovky přepne QSS property
@@ -98,6 +100,8 @@ jako ve VS Code (Sort by › Size › Descending, Go to drive › C:, Switch tab
 Terminal shell); `checked=True` označí aktuální stav. Nová funkce bez záznamu v paletě = nedokončená. Paleta ukazuje nahoře naposledy použité příkazy (i listy
 podúrovní zploštělé na „Sort by › Size › Descending“); cesty se ukládají do DB settings `palette_recent`, klíč =
 popisky oddělené `|`, takže **přejmenování popisku příkazu** starý záznam tiše zahodí.
+Hledání na kořenové úrovni prohledává i listy podúrovní (zploštělé, `_deep_entries`, hloubka 3), takže „name“
+najde „Sort by › Name › Ascending“.
 
 ## Pravidla vzhledu (viz solarqt MANUAL.md)
 

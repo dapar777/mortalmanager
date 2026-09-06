@@ -41,7 +41,7 @@ from src.filesystem.local_fs import LocalFileSystemProvider
 from src.filesystem.watcher import DirectoryWatcher
 from src.settings.config import ConfigManager
 from src.solarqt import icons, theme, widgets
-from src.solarqt.widgets import IconButton
+from src.solarqt.widgets import IconButton, SearchField
 from .file_table import FileTableView
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ class _Tab:
         self.sort_order = SortOrder.ASCENDING
         self.show_hidden = False
         self.cursor_name: str = ""
+        self.filter_text: str = ""     # quick filter (Ctrl+S / '*'), cleared on directory change
 
 
 class _VcsInfo:
@@ -318,11 +319,20 @@ class PanelWidget(QFrame):
         self._table.entry_activated.connect(self._on_entry_activated)
         self._table.space_pressed.connect(self._toggle_selection)
         self._table.sort_requested.connect(self._on_sort_requested)
+        self._table.filter_requested.connect(self.show_filter)
         self._table.file_model().rename_requested.connect(self._on_rename_committed)
         self._table.mousePressEvent = self._on_table_mouse_press  # type: ignore[method-assign]
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self._table, 1)
+
+        # Quick filter (hidden until Ctrl+S / '*')
+        self._filter_edit = SearchField("Filter…   Esc clears   Enter back to list")
+        self._filter_edit.setObjectName("search")
+        self._filter_edit.setVisible(False)
+        self._filter_edit.textChanged.connect(self._on_filter_text)
+        self._filter_edit.installEventFilter(self)
+        layout.addWidget(self._filter_edit)
 
         # Footer
         footer = QFrame()
@@ -421,6 +431,12 @@ class PanelWidget(QFrame):
             tab.history.push(resolved)
         if resolved != tab.path:
             tab.cursor_name = ""
+            if tab.filter_text:
+                tab.filter_text = ""
+                self._filter_edit.blockSignals(True)
+                self._filter_edit.clear()
+                self._filter_edit.setVisible(False)
+                self._filter_edit.blockSignals(False)
         tab.path = resolved
         self._path_edit.setText(resolved)
         self._path_edit.setCursorPosition(0)   # narrow field: show the drive, not the tail
@@ -492,7 +508,8 @@ class PanelWidget(QFrame):
             self._info_label.setText(f"Error: {exc}")
 
     def _apply_entries(self, entries: list[FileEntry], path: str) -> None:
-        entries = self._sort_entries(entries)
+        self._unfiltered = list(entries)
+        entries = self._filter_entries(self._sort_entries(entries))
         tab = self._current_tab
         model = self._table.file_model()
         # drop stale selection (files that disappeared)
@@ -540,6 +557,9 @@ class PanelWidget(QFrame):
         sel_count = self._current_tab.selection.count
         sel_size = self._current_tab.selection.total_size(entries)
         info = f"{dirs} folders, {files} files ({format_size(total) or '0 B'})"
+        if self._current_tab.filter_text:
+            all_count = sum(1 for e in getattr(self, "_unfiltered", []) if not e.is_parent)
+            info = f"Filter „{self._current_tab.filter_text}“: {dirs + files} of {all_count}  ·  " + info
         self._info_label.setText(info)
         if sel_count:
             self._sel_label.setText(f"{sel_count} selected · {format_size(sel_size) or '0 B'}")
@@ -737,7 +757,65 @@ class PanelWidget(QFrame):
         cur = self.current_entry()
         if cur:
             tab.cursor_name = cur.name
-        self._apply_entries(self._table.file_model().get_all_entries(), tab.path)
+        self._apply_entries(getattr(self, "_unfiltered", self._table.file_model().get_all_entries()), tab.path)
+
+    # ------------------------------------------------------------------ quick filter (Ctrl+S / '*')
+
+    def _filter_entries(self, entries: list[FileEntry]) -> list[FileEntry]:
+        text = self._current_tab.filter_text.strip().lower()
+        if not text:
+            return entries
+        import fnmatch
+        pattern = text if any(ch in text for ch in "*?[") else f"*{text}*"
+        return [e for e in entries if e.is_parent or fnmatch.fnmatchcase(e.name.lower(), pattern)]
+
+    def show_filter(self, initial: str = "") -> None:
+        """Ctrl+S / '*': show the filter field under the list and type into it."""
+        self._filter_edit.setVisible(True)
+        if initial:
+            self._filter_edit.setText(initial)
+        self._filter_edit.setFocus()
+        self._filter_edit.selectAll()
+
+    def clear_filter(self) -> None:
+        self._current_tab.filter_text = ""
+        self._filter_edit.blockSignals(True)
+        self._filter_edit.clear()
+        self._filter_edit.blockSignals(False)
+        self._filter_edit.setVisible(False)
+        self._rerender()
+        self.give_focus()
+
+    @property
+    def filter_text(self) -> str:
+        return self._current_tab.filter_text if self._tabs else ""
+
+    def _on_filter_text(self, text: str) -> None:
+        self._current_tab.filter_text = text
+        self._rerender()
+
+    def _rerender(self) -> None:
+        cur = self.current_entry()
+        if cur:
+            self._current_tab.cursor_name = cur.name
+        self._apply_entries(getattr(self, "_unfiltered", []), self.current_path)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        from PySide6.QtCore import QEvent
+        if obj is self._filter_edit and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Escape:
+                self.clear_filter()
+                return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.give_focus()          # keep the filter, work with the list
+                return True
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+                       Qt.Key.Key_Home, Qt.Key.Key_End):
+                from PySide6.QtWidgets import QApplication
+                QApplication.sendEvent(self._table, event)   # move the cursor while typing
+                return True
+        return super().eventFilter(obj, event)
 
     def give_focus(self) -> None:
         self._table.setFocus()

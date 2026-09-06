@@ -309,6 +309,7 @@ class MainWindow(QMainWindow):
 
         cmd_menu = mb.addMenu("&Commands")
         cmd_menu.addAction(icons.icon("search"), "&Search…\tAlt+F7", self._open_search)
+        cmd_menu.addAction(icons.icon("filter"), "&Quick Filter\tCtrl+S", lambda: self._active_panel_widget.show_filter())
         cmd_menu.addAction(icons.icon("rename"), "Bulk &Rename…\tCtrl+M", self._bulk_rename)
         cmd_menu.addSeparator()
         cmd_menu.addAction(icons.icon("scale"), "Calculate Si&ze", self._calc_size)
@@ -381,6 +382,7 @@ class MainWindow(QMainWindow):
             ("Ctrl+Shift+P", self._open_command_palette),
             ("Ctrl+A",      self._active_panel_widget_select_all),
             ("Ctrl+L",      self._focus_path),
+            ("Ctrl+S",      lambda: self._active_panel_widget.show_filter()),
             ("Ctrl+Shift+C", self._copy_names),
             ("Ctrl+Alt+C",  self._copy_paths),
             ("Alt+Down",    lambda: self._active_panel_widget.show_history_menu()),
@@ -667,6 +669,9 @@ class MainWindow(QMainWindow):
             e("Navigate", "New tab", lambda: p._new_tab_from_current(), "Ctrl+T", icon="plus"),
             e("Navigate", "Close tab", lambda: p.close_current_tab(), icon="close"),
             e("Navigate", "Search…", self._open_search, "Alt+F7", icon="search"),
+            e("Navigate", "Quick filter (this panel)", lambda: p.show_filter(), "Ctrl+S or *", icon="filter",
+              checked=bool(p.filter_text)),
+            e("Navigate", "Clear quick filter", lambda: p.clear_filter(), "Esc in filter", icon="close"),
             e("Navigate", "Show in Explorer", lambda: p._show_in_explorer(
                 p.selected_entries()[0].full_path if p.selected_entries() else p.current_path), icon="explorer"),
             e("Navigate", "Windows shell menu", lambda: p._show_windows_shell_menu(

@@ -386,6 +386,7 @@ class FileTableView(QTableView):
     entry_activated = Signal(object)   # FileEntry
     space_pressed = Signal(object)     # FileEntry – toggle selection
     sort_requested = Signal(object)    # SortField (header click)
+    filter_requested = Signal(str)     # '*' typed: open the quick filter (with initial text)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -543,6 +544,11 @@ class FileTableView(QTableView):
 
         text = event.text()
         ctrl_alt = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+        if text == "*" and not (event.modifiers() & Qt.KeyboardModifier.KeypadModifier):
+            # Total Commander: '*' on the main keyboard opens the quick filter
+            # (the keypad '*' stays "select all")
+            self.filter_requested.emit("")
+            return
         if text and text.isprintable() and not ctrl_alt:
             self._type_ahead += text.lower()
             self._type_ahead_timer.start()

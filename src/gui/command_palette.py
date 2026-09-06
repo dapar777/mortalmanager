@@ -57,6 +57,7 @@ class CommandPalette(QDialog):
         self._recent = list(recent or [])
         self._on_run = on_run
         self._stack: list[tuple[list[dict], str]] = []   # (entries, breadcrumb title) of parent levels
+        self._deep: list[dict] | None = None             # flattened sub-level leaves, built on first search
         self._entries = self._with_recent(entries)
         self._title = title
         self.setWindowTitle(title)
@@ -162,6 +163,33 @@ class CommandPalette(QDialog):
         self._refresh_level()
         return True
 
+    # ------------------------------------------------------------------ deep search
+
+    DEEP_MAX_DEPTH = 3
+
+    def _deep_entries(self) -> list[dict]:
+        """All leaves of sub-levels, flattened ("Sort by › Name"), so a query at
+        the top level finds them directly (VS Code shows sub-commands the same way)."""
+        if self._deep is not None:
+            return self._deep
+        out: list[dict] = []
+
+        def walk(entry: dict, depth: int, category: str) -> None:
+            if depth > self.DEEP_MAX_DEPTH:
+                return
+            for c in _children_of(entry):
+                c["_path"] = [*entry["_path"], c["label"]]
+                if c.get("children") is not None:
+                    walk(c, depth + 1, category)
+                else:
+                    out.append({**c, "label": "  ›  ".join(c["_path"]), "category": category, "_deep": True})
+
+        for root in self._root:
+            if root.get("children") is not None:
+                walk(root, 1, root.get("category", ""))
+        self._deep = out
+        return out
+
     # ------------------------------------------------------------------ list
 
     @staticmethod
@@ -174,7 +202,11 @@ class CommandPalette(QDialog):
     def _filter(self, q: str) -> None:
         q = q.strip().lower()
         self.list.clear()
-        for e in self._entries:
+        candidates = list(self._entries)
+        if q and not self._stack:
+            shown = {PATH_SEP.join(e.get("_path", [e["label"]])) for e in candidates}
+            candidates += [d for d in self._deep_entries() if PATH_SEP.join(d["_path"]) not in shown]
+        for e in candidates:
             if not self._matches(e, q):
                 continue
             label = e["label"]
@@ -186,6 +218,8 @@ class CommandPalette(QDialog):
             if e.get("_recent"):
                 it.setIcon(icons.icon("clock", 12))
                 it.setToolTip("recently used")
+            elif e.get("_deep"):
+                it.setIcon(icons.icon("subtasks", 12))
             elif e.get("icon"):
                 it.setIcon(icons.icon(e["icon"], 12))
             if e.get("checked") and not e.get("_recent"):
