@@ -1281,14 +1281,33 @@ class MainWindow(QMainWindow):
         d = self._drive_bar.drive_for(self._active_panel_widget.current_path)
         self._free_label.setText(DriveBar.free_text(d))
 
+    # Enter runs these (Total Commander); F3 still views a .bat / .cmd as text
+    _EXEC_EXTENSIONS = frozenset({"exe", "com", "bat", "cmd", "msi", "lnk", "vbs", "wsf", "scr"})
+
     def _on_entry_open(self, entry: FileEntry) -> None:
-        """Open a file: viewer for known text/images, otherwise the shell default."""
+        """Enter on a file: executables run, known text/images open in the
+        viewer, everything else goes to the shell default."""
         from src.viewer.file_viewer import _IMAGE_EXTENSIONS, _TEXT_EXTENSIONS, FileViewerWindow
         ext = entry.extension.lower()
-        if ext in _TEXT_EXTENSIONS or ext in _IMAGE_EXTENSIONS:
+        if ext in self._EXEC_EXTENSIONS:
+            self._run_file(entry.full_path)
+        elif ext in _TEXT_EXTENSIONS or ext in _IMAGE_EXTENSIONS:
             FileViewerWindow(entry.full_path, self).show()
         else:
             self._active_panel_widget._open_default(entry.full_path)
+
+    def _run_file(self, path: str) -> None:
+        """Run an executable / script from its own folder. Batch files get a
+        new console window that stays open at the end so the output can be read."""
+        folder = str(Path(path).parent)
+        try:
+            if path.lower().endswith((".bat", ".cmd")):
+                subprocess.Popen(["cmd.exe", "/K", path], cwd=folder,
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                os.startfile(path, cwd=folder)
+        except Exception as exc:
+            Toast.show_message(self, f"Cannot run {Path(path).name}: {exc}", "error")
 
     def _show_about(self) -> None:
         box = QMessageBox(self)
