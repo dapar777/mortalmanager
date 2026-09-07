@@ -536,6 +536,8 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabl
   color: {t.muted}; background: {t.panel};
 }}
 QLineEdit:read-only {{ background: {t.panel}; }}
+/* in-place rename in the file table: fits the row, keeps descenders visible */
+QLineEdit#renameEditor {{ padding: 0 {p(4)}px; border: 1px solid {t.accent}; border-radius: 0; background: {t.card}; }}
 QLineEdit#search {{ padding-left: {p(8)}px; border-radius: {p(14)}px; }}
 QLineEdit#pathEdit {{ padding: {p(3)}px {p(8)}px; }}
 QComboBox::drop-down {{ border: 0; width: {p(22)}px; subcontrol-origin: padding; subcontrol-position: center right; }}

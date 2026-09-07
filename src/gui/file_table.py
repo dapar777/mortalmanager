@@ -367,7 +367,20 @@ class FileTableModel(QAbstractTableModel):
 
 
 class _NameDelegate(QStyledItemDelegate):
-    """Editor for in-place rename: pre-selects the stem, not the extension."""
+    """Editor for in-place rename: pre-selects the stem, not the extension;
+    the editor is a hair taller than the row so descenders / underscores show."""
+
+    def createEditor(self, parent, option, index):  # noqa: N802
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            editor.setObjectName("renameEditor")     # QSS: no padding, accent border
+        return editor
+
+    def updateEditorGeometry(self, editor, option, index) -> None:  # noqa: N802
+        r = option.rect
+        extra = theme.px(3)
+        r.adjust(0, -extra, 0, extra)
+        editor.setGeometry(r)
 
     def setEditorData(self, editor, index) -> None:  # noqa: N802
         super().setEditorData(editor, index)
@@ -575,6 +588,12 @@ class FileTableView(QTableView):
                 return
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
+        if self.state() == QTableView.State.EditingState:
+            # in-place rename: QLineEdit ignores Return / Escape after handling them so they
+            # bubble up here – they must not open the entry or switch panels (Qt's own view
+            # guards Return the same way)
+            super().keyPressEvent(event)
+            return
         key = event.key()
         if key == Qt.Key.Key_Tab:
             mw = self.window()

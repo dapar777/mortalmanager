@@ -119,7 +119,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   (`FileTableView._shift_navigate` → signál `toggle_rows`), Shift+klik označí rozsah (`mark_rows`), Ctrl+klik přepne;
   stav označení drží `_Tab.selection` (`SelectionManager`), model jen zobrazuje (`set_selected`). F2 / Shift+F6 = přejmenování v místě
   (`FileTableModel.setData` → `rename_requested` → `MainWindow._on_inline_rename` → job RENAME; delegát předvybere
-  jméno bez přípony), Ctrl+M = hromadné.
+  jméno bez přípony, editor `#renameEditor` je o pár px vyšší než řádek kvůli dolním dotahům; **`keyPressEvent` tabulky
+  musí ve stavu `EditingState` volat jen `super()`** – QLineEdit Enter/Esc po zpracování ignoruje a klávesa by jinak
+  spustila položku nebo Tabem přepnula panel), Ctrl+M = hromadné.
   Alt+F1 / Alt+F2 = `MainWindow._show_drive_menu(side)` (menu disků nad panelem, výběr panel aktivuje).
   Dlouhá menu jdou přes `panel.fit_menu_on_screen` (vrací zvolenou akci), které při přetečení obrazovky zmenší svislý padding položek
   jen o tolik, kolik je nutné (per-menu stylesheet), a až pak sáhne po QSS property `compact="dense"` (menší písmo),
