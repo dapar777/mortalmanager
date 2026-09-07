@@ -243,7 +243,7 @@ class EmbeddedTerminalWidget(QFrame):
     # ------------------------------------------------------------------ display
 
     def _print_welcome(self) -> None:
-        self._write(f"MortalManager terminal  [{self.current_shell()}]  {self._cwd}", "muted")
+        self._write(f"Ultimate Commander terminal  [{self.current_shell()}]  {self._cwd}", "muted")
 
     def _update_prompt(self) -> None:
         p = Path(self._cwd)
@@ -289,6 +289,9 @@ class EmbeddedTerminalWidget(QFrame):
             self._input.clear()
             self._write(f"{self._prompt_lbl.text()} {line}", "info")
             self._on_session_prompt("")        # cleared until the program prompts again
+            if line.strip():
+                # history under the REPL's name: ↑↓ inside the session and the palette ("c " mode) find it
+                self._db.add_command_history(line, self._cwd, self._session.name)
             lines = [line]
             if has_placeholders(line, strict=True) and self._context is not None:
                 # raw values: the user wrote the quotes (print('%SI')); %SI / %RI = one line per entry
@@ -468,7 +471,7 @@ class EmbeddedTerminalWidget(QFrame):
 
     def _hist_step(self, direction: int) -> None:
         try:
-            shell = self.current_shell()
+            shell = self._session.name if self._session is not None else self.current_shell()
             history = self._db.get_command_history(self._cwd, shell=shell)
             if not history:
                 return

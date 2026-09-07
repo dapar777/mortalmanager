@@ -1,6 +1,6 @@
 """File-name index in SQLite – storage, scanning and search (no Qt).
 
-Schema (``%APPDATA%\\MortalManager\\index.db``, WAL so readers never block the
+Schema (``%APPDATA%\\UltimateCommander\\index.db``, WAL so readers never block the
 indexer):
 
     files(id, path UNIQUE NOCASE, name, is_dir, root, gen)

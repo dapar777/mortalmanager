@@ -2,7 +2,7 @@
 rem Restart: kill every running instance (python.exe and windowless pythonw.exe with "src.main"
 rem on the command line), then start a fresh one. Python is located by find_python.bat
 rem (MM_PYTHON, .venv next to the repo, C:\mm_venv, PATH); wmic is not used (gone on newer Windows 11).
-rem pythonw.exe = no console window; log goes to %APPDATA%\MortalManager\mortalmanager.log
+rem pythonw.exe = no console window; log goes to %APPDATA%\UltimateCommander\ultimatecommander.log
 setlocal
 cd /d "%~dp0"
 call "%~dp0find_python.bat" || (pause & exit /b 1)

@@ -179,7 +179,7 @@ class FileEditorWindow(QDialog):
         self, file_paths: list[str], parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Editor – MortalManager")
+        self.setWindowTitle("Editor – Ultimate Commander")
         self.resize(1000, 700)
         self._build_ui()
         for fp in file_paths:

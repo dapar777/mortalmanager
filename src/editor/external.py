@@ -14,7 +14,7 @@ import os
 import shutil
 import subprocess
 
-DEFAULT_EDITOR = "code"
+DEFAULT_EDITOR = "code -n"      # -n = new VS Code window
 PLACEHOLDER = "{file}"
 
 _VSCODE_EXE = (

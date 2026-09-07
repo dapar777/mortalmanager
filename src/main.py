@@ -20,11 +20,12 @@ from src.solarqt import theme
 
 _LOG_FORMAT = "%(asctime)s  %(levelname)-8s  %(name)s – %(message)s"
 if sys.stderr is None or sys.stdout is None:
-    # started with pythonw.exe (no console): log to %APPDATA%\MortalManager\mortalmanager.log
-    _log_dir = Path.home() / "AppData" / "Roaming" / "MortalManager"
+    # started with pythonw.exe (no console): log to %APPDATA%\UltimateCommander\ultimatecommander.log
+    from src.settings.config import ConfigManager
+    _log_dir = ConfigManager.app_data_dir()
     _log_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT, datefmt="%H:%M:%S",
-                        filename=str(_log_dir / "mortalmanager.log"), encoding="utf-8")
+                        filename=str(_log_dir / "ultimatecommander.log"), encoding="utf-8")
 else:
     logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT, datefmt="%H:%M:%S")
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def _log_uncaught(exc_type, exc, tb) -> None:
 sys.excepthook = _log_uncaught
 
 ASSETS_DIR = _ROOT / "assets" / "icons"
-APP_NAME = "MortalManager"
+APP_NAME = "Ultimate Commander"
 APP_VERSION = "1.0.0"
 
 
@@ -46,8 +47,8 @@ def app_icon(variant: str = "dark") -> QIcon:
     """Terakota „files" icon (assets/icons) – ``variant`` "light" or "dark"
     matches the theme (light theme = paper background, dark = espresso)."""
     variant = "light" if variant == "light" else "dark"
-    ico = ASSETS_DIR / f"mortalmanager-{variant}.ico"
-    png = ASSETS_DIR / f"mortalmanager-{variant}-512.png"
+    ico = ASSETS_DIR / f"ultimatecommander-{variant}.ico"
+    png = ASSETS_DIR / f"ultimatecommander-{variant}-512.png"
     icon = QIcon(str(ico)) if ico.exists() else QIcon()
     if png.exists():
         icon.addFile(str(png))
@@ -61,7 +62,7 @@ def _claim_taskbar_identity() -> None:
         return
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MortalManager.App.2")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("UltimateCommander.App")
     except Exception:
         pass
 

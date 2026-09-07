@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Co to je
 
-MortalManager — dvoupanelový souborový manažer pro Windows ve stylu Total Commanderu (Python 3.12+, PySide6).
+Ultimate Commander (repo zatím `mortalmanager`) — dvoupanelový souborový manažer pro Windows ve stylu Total Commanderu (Python 3.12+, PySide6).
 Rozdělaný projekt: jádro (panely, taby, kopírování/přesun/mazání přes frontu jobů, archivy, FTP/SFTP, prohlížeč F3,
 editor F4, vestavěný terminál, command palette, VCS tečky u souborů, zoom UI) je funkční; chybí balení a GUI testy.
 `README.md` je krátký český přehled. Kód, docstringy a komentáře jsou anglicky, UI anglicky, komunikace s autorem česky.
@@ -17,9 +17,11 @@ je venv v `C:\mm_venv` (Python 3.12, PySide6, pytest); `start.bat` / `restart.ba
 `import PySide6`), takže na cizím PC stačí venv vedle projektu; žádná cesta nesmí být v .bat natvrdo.
 `restart.bat` zabije **všechny** běžící python/pythonw procesy s `src.main` v příkazové řádce (PowerShell
 `Get-CimInstance`, ne `wmic` – to v novém Windows 11 chybí) a spustí novou instanci přes `pythonw.exe` (bez konzole;
-`src/main.py` pak loguje do `%APPDATA%\MortalManager\mortalmanager.log`). `pyproject` má `[project.gui-scripts]`, ne `scripts`. Venv stojí na **Pythonu z Microsoft Store (MSIX)** – hlavní panel
+`src/main.py` pak loguje do `%APPDATA%\UltimateCommander\ultimatecommander.log`). `pyproject` má `[project.gui-scripts]`, ne `scripts`. Venv stojí na **Pythonu z Microsoft Store (MSIX)** – hlavní panel
 proto ignoruje ikonu okna; `MainWindow._apply_taskbar_identity` nastavuje AppUserModel vlastnosti přímo na HWND
-(pywin32 `propsys`), bez toho je v panelu ikona Pythonu. ruff a mypy v `C:\mm_venv` nainstalované
+(pywin32 `propsys`), bez toho je v panelu ikona Pythonu. Tentýž MSIX Python **virtualizuje zápisy do `%APPDATA%`**: složka
+`UltimateCommander` (config.db, index.db, log) je fyzicky v `%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_…\LocalCache\Roaming\`,
+z Exploreru/PowerShellu v `%APPDATA%` není vidět. ruff a mypy v `C:\mm_venv` nainstalované
 nejsou (`pip install -e .[dev]` je doplní); jejich konfigurace cílí na Python 3.13.
 
 ```bash
@@ -60,14 +62,14 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   OperationProgress) / job_finished(job_id, JobResult) / job_failed`, `MainWindow` po dokončení obnoví oba panely
   a ukáže `Toast`. `JobResult.undo_pairs` krmí `UndoManager`. Cokoli blokujícího musí jít touto cestou.
 - **`archive/`** — `ArchiveHandler` (ABC) + zip/tar/7z handlery za `ArchiveManager`.
-- **`database/`** — `DatabaseManager` nad SQLite v `%APPDATA%\MortalManager` (nastavení, záložky, oblíbené, FTP
+- **`database/`** — `DatabaseManager` nad SQLite v `%APPDATA%\UltimateCommander` (`config._migrate_data_dir` při prvním startu přejmenuje starou složku `MortalManager`; nastavení, záložky, oblíbené, FTP
   relace, historie příkazů a cest, historie operací, taby). **`settings/ConfigManager`** je singleton
   (`get_instance()`) s dataclassami `AppConfig` (mj. `theme`, `zoom`) / `PanelConfig`.
 - **`index/`** — index názvů souborů pro paletu, sdílený všemi instancemi: `file_index.py` (SQLite
-  `%APPDATA%\MortalManager\index.db`, WAL; tabulka `files` + FTS5 s **trigram** tokenizerem, takže `MATCH '"rep"'` je
+  `%APPDATA%\UltimateCommander\index.db`, WAL; tabulka `files` + FTS5 s **trigram** tokenizerem, takže `MATCH '"rep"'` je
   indexový dotaz (**ne** `LIKE … ESCAPE` – ESCAPE optimalizaci vypne, 500 ms místo 5 ms na 1,2 M záznamů); generace `gen` pro čištění smazaných po plném skenu; `Excluder` = jména složek kdekoli + prefixy
   cest; `is_network_path` vyřadí síťové disky a UNC z kořenů i když jsou v nastavení, cloudové složky na FIXED disku
-  zůstávají) a `indexer.py` (vlákno; **vůdce = držitel Windows named mutexu** `Local\MortalManager.Indexer`, ostatní
+  zůstávají) a `indexer.py` (vlákno; **vůdce = držitel Windows named mutexu** `Local\UltimateCommander.Indexer`, ostatní
   instance jen čtou a zkoušejí to každých 30 s; plný sken po `rescan_hours`, živě přes `ReadDirectoryChangesW`
   rekurzivně na každý kořen, přetečení bufferu = přeskan kořene). Bez Qt, testy v `tests/test_index.py`.
   V GUI ho drží `gui/index_service.py` (start 3 s po oknu, čtecí spojení pro hledání, konfigurace z `AppConfig.index_*`,
@@ -80,7 +82,7 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `icons.pixmap(name, size)` už zoom aplikuje. `widgets.retheme_tree(root, repolish=)` volá `retheme()` na
   každém widgetu, který drží barvu/velikost mimo QSS (IconButton, tabulka, panel, terminál…).
 - **`gui/`** — `MainWindow`: `#headerBar` (logo z `assets/icons`, název, `DriveBar` – disky enumeruje worker
-  v `QThreadPool`, „Search“, „Commands“, přepínač tématu) · splitter dvou `PanelWidget` + `#fkeysBar` ·
+  v `QThreadPool`, „Search“, „Commands“, tlačítko nového okna = `_new_instance` (další proces `-m src.main`), přepínač tématu) · splitter dvou `PanelWidget` + `#fkeysBar` ·
   `EmbeddedTerminalWidget` (příkazy běží po jednom se zachyceným výstupem, timeout 30 s; zástupné znaky
   `%N %P %T %S %R %SI %RI` rozbaluje čistý `core/cmdline.py` (`expand` → seznam příkazů, `%SI`/`%RI` = jeden
   na označenou položku, terminál je pouští za sebou přes `_queue`) z `CmdContext`, který dodává
@@ -88,7 +90,7 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   rozbalují bez uvozovek (`quoted=False`, `has_placeholders(strict=True)` ignoruje samotné `%%`) a `%SI`/`%RI`
   pošlou řádek za každou položku; samotné `d:` = přepnutí disku, `cd /d` se toleruje; `terminal_session.py`:
   `classify` pozná REPL (`python`, `py`, `node` bez skriptu → `ReplSession`, trvalý proces s rourami, `-i -q`,
-  prompty `>>> `/`... ` se odloupnou do popisku řádky, Ctrl+D = EOF, Ctrl+C = kill, `shutdown()` při zavření okna)
+  prompty `>>> `/`... ` se odloupnou do popisku řádky, Ctrl+D = EOF, Ctrl+C = kill, řádky do DB historie pod jménem REPL, `shutdown()` při zavření okna)
   a konzolové programy (`cmd`, `powershell`, `vim`, `ssh`… → nové konzolové okno); Alt++ / Alt+− v řádce = signál `height_step`, `MainWindow._terminal_height_step`
   dočasně přenastaví `_v_splitter`, `_on_focus_changed` přes `QApplication.focusChanged` vrátí původní výšku, jakmile
   fokus opustí terminál) · stavový řádek (info aktivního panelu, zoom %, volné místo). Zoom: Ctrl+kolečko
@@ -115,12 +117,14 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   Alt+F1 / Alt+F2 = `MainWindow._show_drive_menu(side)` (menu disků nad panelem, výběr panel aktivuje).
   Dlouhá menu jdou přes `panel.fit_menu_on_screen` (vrací zvolenou akci), které při přetečení obrazovky zmenší svislý padding položek
   jen o tolik, kolik je nutné (per-menu stylesheet), a až pak sáhne po QSS property `compact="dense"` (menší písmo),
-  aby Qt nelámalo menu do dvou sloupců. Kontextové menu má nahoře sekci „Frequently used“:
+  aby Qt nelámalo menu do dvou sloupců. Kontextové menu na `..`/prázdné ploše
+  je menu aktuální složky (`_populate_windows_shell_menu([cur])`; kořen disku se váže přes desktop folder a absolutní
+  pidl). Kontextové menu má nahoře sekci „Frequently used“:
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
   settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
 - **`viewer/`, `editor/`** — samostatná okna pro F3/F4; F4 nejdřív zkusí externí editor (`AppConfig.external_editor`,
-  výchozí `code`; `editor/external.py`: tokenizace s uvozovkami, `{file}` = cesty, `code` → `Code.exe` místo
+  výchozí `code -n`, uložené holé `code` se při načtení povýší; `editor/external.py`: tokenizace s uvozovkami, `{file}` = cesty, `code` → `Code.exe` místo
   `code.cmd`, nenalezený program = Toast + vestavěný editor; dialog `dialogs/editor_dialog.py`); mono písmo `theme.mono_font()`, zvýraznění syntaxe
   ze Solarized konstant (`theme.GREEN` klíčová slova, `CYAN` řetězce, `MAGENTA` čísla).
 

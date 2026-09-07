@@ -2,7 +2,7 @@
 
 Leader election
     Every instance runs an Indexer thread, but only the one holding the
-    Windows named mutex ``Local\\MortalManager.Indexer`` scans and watches.
+    Windows named mutex ``Local\\UltimateCommander.Indexer`` scans and watches.
     A mutex is released by the OS when its owner dies, so a crashed leader is
     replaced by the next instance that retries (every LEADER_RETRY_S).
     Non-leaders only read the shared database.
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 LEADER_RETRY_S = 30.0
 EVENT_FLUSH_S = 0.8
-MUTEX_NAME = "Local\\MortalManager.Indexer"
+MUTEX_NAME = "Local\\UltimateCommander.Indexer"
 
 # ReadDirectoryChangesW actions
 _ADDED, _REMOVED, _MODIFIED, _RENAMED_OLD, _RENAMED_NEW = 1, 2, 3, 4, 5

@@ -10,7 +10,23 @@ from src.database.db import DatabaseManager
 from src.index.file_index import DEFAULT_EXCLUDE_NAMES, default_exclude_paths
 
 
-_APP_DATA_DIR = Path.home() / "AppData" / "Roaming" / "MortalManager"
+_OLD_APP_DATA_DIR = Path.home() / "AppData" / "Roaming" / "MortalManager"   # name before Sept 2026
+_APP_DATA_DIR = Path.home() / "AppData" / "Roaming" / "UltimateCommander"
+
+
+def _migrate_data_dir() -> Path:
+    """First start after the rename: move %APPDATA%\\MortalManager to UltimateCommander.
+    If the move fails (an old instance still holds the database) keep using the old folder."""
+    if _APP_DATA_DIR.exists() or not _OLD_APP_DATA_DIR.exists():
+        return _APP_DATA_DIR
+    try:
+        _OLD_APP_DATA_DIR.rename(_APP_DATA_DIR)
+        return _APP_DATA_DIR
+    except OSError:
+        return _OLD_APP_DATA_DIR
+
+
+_APP_DATA_DIR = _migrate_data_dir()
 _DB_PATH = _APP_DATA_DIR / "config.db"
 
 
@@ -36,7 +52,7 @@ class AppConfig:
     thumbnail_size: int = 64
     editor_font: str = "Consolas"
     editor_font_size: int = 10
-    external_editor: str = "code"   # F4 command line ({file} = paths); empty = built-in editor
+    external_editor: str = "code -n"   # F4 command line ({file} = paths); empty = built-in editor
     left_panel: PanelConfig = field(default_factory=PanelConfig)
     right_panel: PanelConfig = field(default_factory=PanelConfig)
     splitter_ratio: float = 0.5
@@ -93,6 +109,8 @@ class ConfigManager:
         cfg.editor_font = d.get("editor_font", cfg.editor_font)
         cfg.editor_font_size = d.get("editor_font_size", cfg.editor_font_size)
         cfg.external_editor = str(d.get("external_editor", cfg.external_editor))
+        if cfg.external_editor.strip() == "code":      # old default → open in a new VS Code window
+            cfg.external_editor = "code -n"
         cfg.splitter_ratio = d.get("splitter_ratio", cfg.splitter_ratio)
         cfg.window_width = d.get("window_width", cfg.window_width)
         cfg.window_height = d.get("window_height", cfg.window_height)
@@ -176,4 +194,9 @@ class ConfigManager:
 
     @property
     def data_dir(self) -> Path:
+        return _APP_DATA_DIR
+
+    @staticmethod
+    def app_data_dir() -> Path:
+        """%APPDATA% folder of the app (settings, index, log) – usable before the singleton exists."""
         return _APP_DATA_DIR

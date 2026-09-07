@@ -131,7 +131,7 @@ STATUS_KINDS: dict[str, str] = {
 }
 
 # directory name for generated SVG/PNG assets (in the user's temp directory)
-ASSET_DIR_NAME = "mortalmanager-theme"
+ASSET_DIR_NAME = "ultimatecommander-theme"
 
 
 def current() -> Tokens:

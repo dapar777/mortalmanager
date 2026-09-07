@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ UI build
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("MortalManager")
+        self.setWindowTitle("Ultimate Commander")
         self.setMinimumSize(theme.MIN_WINDOW_WIDTH, 360)
 
         central = QWidget()
@@ -193,9 +193,12 @@ class MainWindow(QMainWindow):
         self._btn_commands.clicked.connect(self._open_command_palette)
         self._btn_theme = IconButton("moon", "Toggle dark theme")
         self._btn_theme.clicked.connect(self._toggle_theme)
+        self._btn_new_window = IconButton("new_window", "New window (another instance)")
+        self._btn_new_window.clicked.connect(self._new_instance)
         lay.addWidget(self._btn_search)
         lay.addWidget(self._btn_commands)
         lay.addWidget(VLine())
+        lay.addWidget(self._btn_new_window)
         lay.addWidget(self._btn_theme)
         self._retheme_header()
         return bar
@@ -228,11 +231,11 @@ class MainWindow(QMainWindow):
             from win32com.propsys import propsys, pscon
         except Exception:
             return
-        ico = _ASSETS / f"mortalmanager-{variant}.ico"
+        ico = _ASSETS / f"ultimatecommander-{variant}.ico"
         try:
             ps = propsys.SHGetPropertyStoreForWindow(int(self.winId()))
-            ps.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType("MortalManager.App.2"))
-            ps.SetValue(pscon.PKEY_AppUserModel_RelaunchDisplayNameResource, propsys.PROPVARIANTType("MortalManager"))
+            ps.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType("UltimateCommander.App"))
+            ps.SetValue(pscon.PKEY_AppUserModel_RelaunchDisplayNameResource, propsys.PROPVARIANTType("Ultimate Commander"))
             if ico.exists():
                 ps.SetValue(pscon.PKEY_AppUserModel_RelaunchIconResource, propsys.PROPVARIANTType(f"{ico},0"))
             pyw = Path(sys.executable).with_name("pythonw.exe")
@@ -338,6 +341,7 @@ class MainWindow(QMainWindow):
         net_menu = mb.addMenu("&Network")
         net_menu.addAction(icons.icon("network"), "&FTP/SFTP Connect…", self._open_ftp)
 
+        file_menu.addAction(icons.icon("new_window"), "New &Window", self._new_instance)
         show_menu = mb.addMenu("&Show")
         self._act_hidden = show_menu.addAction("Show &Hidden Files\tCtrl+H")
         self._act_hidden.setCheckable(True)
@@ -362,7 +366,7 @@ class MainWindow(QMainWindow):
         self._act_dark_theme.triggered.connect(self._toggle_theme)
 
         help_menu = mb.addMenu("&Help")
-        help_menu.addAction(icons.icon("help"), "&About MortalManager", self._show_about)
+        help_menu.addAction(icons.icon("help"), "&About Ultimate Commander", self._show_about)
 
     # ------------------------------------------------------------------ shortcuts
 
@@ -909,7 +913,8 @@ class MainWindow(QMainWindow):
             e("Show", "Zoom out", lambda: self._zoom_step(-1), "Ctrl+-", icon="zoom_out"),
             e("Show", "Reset zoom", self._reset_zoom, "Ctrl+0"),
             # app
-            e("App", "About MortalManager", self._show_about, icon="help"),
+            e("App", "New window (another instance)", self._new_instance, icon="new_window"),
+            e("App", "About Ultimate Commander", self._show_about, icon="help"),
             e("App", "Exit", self.close, "Alt+F4"),
         ]
 
@@ -1209,6 +1214,19 @@ class MainWindow(QMainWindow):
         self._cfg.config.command_bar_visible = visible
         self._save_timer.start()
 
+    def _new_instance(self) -> None:
+        """Start another Ultimate Commander window as a separate process (same
+        interpreter; pythonw.exe next to a console python so no console pops up)."""
+        exe = Path(sys.executable)
+        pyw = exe.with_name("pythonw.exe")
+        prog = str(pyw) if exe.name.lower() == "python.exe" and pyw.exists() else str(exe)
+        root = Path(__file__).resolve().parents[2]
+        try:
+            subprocess.Popen([prog, "-m", "src.main"], cwd=str(root), close_fds=True,
+                             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+        except Exception as exc:
+            Toast.show_message(self, f"Cannot start a new window: {exc}", "error")
+
     def _toggle_theme(self) -> None:
         self._set_theme("light" if self._cfg.config.theme == "dark" else "dark")
 
@@ -1318,11 +1336,11 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         box = QMessageBox(self)
-        box.setWindowTitle("About MortalManager")
+        box.setWindowTitle("About Ultimate Commander")
         variant = "dark" if theme.is_dark() else "light"
-        box.setIconPixmap(QPixmap(str(_ASSETS / f"mortalmanager-{variant}-512.png")).scaled(
+        box.setIconPixmap(QPixmap(str(_ASSETS / f"ultimatecommander-{variant}-512.png")).scaled(
             theme.px(64), theme.px(64), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        box.setText("<b>MortalManager</b><br>Dual pane file manager for Windows")
+        box.setText("<b>Ultimate Commander</b><br>Dual pane file manager for Windows")
         box.setInformativeText("Version 1.0.0 · Python + PySide6 · Solarized look (solarqt)\nInspired by Total Commander")
         box.exec()
 

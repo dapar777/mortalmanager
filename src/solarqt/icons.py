@@ -43,6 +43,7 @@ _PATHS: dict[str, tuple[str, bool]] = {
     "rotate": ('<path d="M4 12a8 8 0 0114-5.3L21 9M21 4v5h-5"/>', False),
     "undo": ('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-2"/>', False),
     "redo": ('<path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 000 10h2"/>', False),
+    "new_window": ('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 9v6M9 12h6"/>', False),
     "external": ('<path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h7"/><path d="M15 3h6v6M10 14L21 3"/>', False),
     "download": ('<path d="M12 3v12M6 11l6 6 6-6M4 21h16"/>', False),
     "upload": ('<path d="M12 21V9M6 13l6-6 6 6M4 3h16"/>', False),

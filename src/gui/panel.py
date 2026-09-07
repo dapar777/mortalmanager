@@ -905,12 +905,18 @@ class PanelWidget(QFrame):
         gp = self._table.viewport().mapToGlobal(_pos) if isinstance(_pos, QPoint) and _pos.x() >= 0 else QCursor.pos()
 
         if not paths:
+            # ".." or empty space: Total Commander shows the menu of the current directory
+            cur = self.current_path
             if hasattr(mw, "_mkdir"):
                 act(menu, "New &Folder\tF7", "folder_plus", mw._mkdir)
             act(menu, "&Refresh\tCtrl+R", "refresh", self.refresh)
             menu.addSeparator()
             act(menu, "Open &Terminal Here", "terminal", self._open_terminal_here)
-            act(menu, "Open in &Explorer", "explorer", lambda: self._show_in_explorer(self.current_path))
+            act(menu, "Open in &Explorer", "explorer", lambda: self._show_in_explorer(cur))
+            act(menu, "Copy &Path", "clipboard", lambda: QApplication.clipboard().setText(cur))
+            act(menu, "&Properties", "info", lambda: self._show_path_properties(cur))
+            menu.addSeparator()
+            self._populate_windows_shell_menu(menu, [cur])
             self._add_frequent_section(menu)
             fit_menu_on_screen(menu, gp)
             return
@@ -1033,6 +1039,10 @@ class PanelWidget(QFrame):
         menu.insertSeparator(first)
 
     # ---- context menu helpers (native Windows shell menu via pywin32)
+    def _show_path_properties(self, path: str) -> None:
+        from .dialogs.properties_dialog import PropertiesDialog
+        PropertiesDialog([path], self).exec()
+
     def _populate_windows_shell_menu(self, menu, paths: list[str]) -> None:
         inserted = False
         try:
@@ -1049,13 +1059,21 @@ class PanelWidget(QFrame):
             _com_init(pythoncom)
             try:
                 desktop = shell.SHGetDesktopFolder()
-                parent_pidl = shell.SHILCreateFromPath(parent_path, 0)[0]
-                folder = desktop.BindToObject(
-                    parent_pidl, None, shell.IID_IShellFolder
-                )
+                is_root = Path(paths[0]).name == ""          # "C:\\": no parent folder to bind
+                if is_root:
+                    folder = desktop
+                    parent_path = paths[0]
+                else:
+                    parent_pidl = shell.SHILCreateFromPath(parent_path, 0)[0]
+                    folder = desktop.BindToObject(
+                        parent_pidl, None, shell.IID_IShellFolder
+                    )
                 child_pidls = []
                 for p in paths:
                     try:
+                        if is_root:
+                            child_pidls.append(shell.SHILCreateFromPath(p, 0)[0])
+                            continue
                         result = folder.ParseDisplayName(hwnd, None, Path(p).name)
                         pidl = None
                         if isinstance(result, tuple):

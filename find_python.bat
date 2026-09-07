@@ -18,7 +18,7 @@ for /f "delims=" %%P in ('where pythonw.exe 2^>nul') do (
 )
 if defined PYW exit /b 0
 
-echo MortalManager: no Python with PySide6 found.
+echo Ultimate Commander: no Python with PySide6 found.
 echo   Create a venv next to the project and install the requirements:
 echo     py -m venv "%_MM_ROOT%.venv"
 echo     "%_MM_ROOT%.venv\Scripts\pip" install -r "%_MM_ROOT%requirements.txt"
