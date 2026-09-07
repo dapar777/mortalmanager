@@ -25,6 +25,7 @@ history), VS Code style. ``status`` (callable() -> str) is shown in the crumb.
 Prefix modes at the top level (Total Commander / VS Code style):
     "␣text"  only application commands (no files, no terminal history)
     "c text" only command-line history
+    "dc text" terminal history entries to DELETE (Enter removes one, the palette stays open)
     "a text" files and folders from the index
     "f text" files only
     "d text" folders only
@@ -55,19 +56,22 @@ from src.solarqt import icons, theme
 ENTRY_ROLE = Qt.ItemDataRole.UserRole
 PATH_SEP = "|"
 RECENT_MAX = 8
-MODES = {"c": "terminal", "a": "all_entries", "f": "files", "d": "dirs"}
+MODES = {"c": "terminal", "a": "all_entries", "f": "files", "d": "dirs", "dc": "terminal_delete"}
 MODE_LABELS = {"commands": "commands only", "terminal": "terminal history",
+               "terminal_delete": "delete from terminal history – Enter removes, palette stays open",
                "all_entries": "files & folders", "files": "files", "dirs": "folders"}
-MODE_HINT = "␣ commands   c␣ terminal   a␣ files+folders   f␣ files   d␣ folders   ·   *? mask, regex ok"
+MODE_HINT = "␣ commands   c␣ terminal   dc␣ delete command from history   a␣ files+folders   f␣ files   d␣ folders   ·   *? mask, regex ok"
 INDEX_MODES = ("all_entries", "files", "dirs")
+SEARCH_MODES = (*INDEX_MODES, "terminal", "terminal_delete")   # list comes from mode_search
 
 
 def parse_mode(text: str) -> tuple[str, str]:
     """(mode, query) from the raw search text; mode "all" when no prefix."""
     if text.startswith(" "):
         return "commands", text.strip()
-    if len(text) >= 2 and text[1] == " " and text[0].lower() in MODES:
-        return MODES[text[0].lower()], text[2:].strip()
+    for n in (2, 1):                       # "dc " before "d "
+        if len(text) > n and text[n] == " " and text[:n].lower() in MODES:
+            return MODES[text[:n].lower()], text[n + 1:].strip()
     return "all", text.strip()
 
 
@@ -226,7 +230,7 @@ class CommandPalette(QDialog):
     def _on_text(self, text: str) -> None:
         # dynamic / extra searches hit the index: debounce them, static levels filter instantly
         mode, q = parse_mode(text) if not self._stack else ("all", text.strip())
-        if self._search_fn is not None or mode in (*INDEX_MODES, "terminal") or (
+        if self._search_fn is not None or mode in SEARCH_MODES or (
                 mode == "all" and callable(self._extra_search) and not self._stack and len(q) >= 3):
             self._search_timer.start()
         else:
@@ -235,7 +239,7 @@ class CommandPalette(QDialog):
     def _fill_mode(self, mode: str, q: str) -> None:
         """Prefix mode: the list is produced by mode_search only."""
         entries = []
-        if callable(self._mode_search) and (q or mode == "terminal"):
+        if callable(self._mode_search) and (q or mode in ("terminal", "terminal_delete")):
             try:
                 entries = self._mode_search(mode, q) or []
             except Exception:
@@ -293,7 +297,7 @@ class CommandPalette(QDialog):
         mode, q = parse_mode(q) if not self._stack else ("all", q.strip())
         q = q.lower()
         note = ""
-        if mode in (*INDEX_MODES, "terminal") and q:
+        if mode in SEARCH_MODES and q:
             from src.index.pattern import parse
             lab = parse(q).label
             note = f" · {lab}" if lab else ""
@@ -301,7 +305,7 @@ class CommandPalette(QDialog):
             self._mode, self._pattern_note = mode, note
             self.crumb.setText(self._crumb_text())
         self.list.clear()
-        if not self._stack and mode in (*INDEX_MODES, "terminal"):
+        if not self._stack and mode in SEARCH_MODES:
             self._fill_mode(mode, q)
             return
         if self._search_fn is not None:
@@ -365,6 +369,16 @@ class CommandPalette(QDialog):
         entry = item.data(ENTRY_ROLE)
         if entry.get("children") is not None or callable(entry.get("search")):
             self._enter_level(entry)
+            return
+        if entry.get("keep_open"):
+            # e.g. deleting history entries: run, then rebuild the list at the same cursor row
+            row = self.list.currentRow()
+            run = entry.get("run")
+            if callable(run):
+                run()
+            self._filter(self.search.text())
+            if self.list.count():
+                self.list.setCurrentRow(min(row, self.list.count() - 1))
             return
         self.accept()
         if callable(self._on_run) and not entry.get("_dynamic"):

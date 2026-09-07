@@ -149,7 +149,8 @@ palety přidá na kořenové úrovni od 3 znaků pár souborů a příkazů z hi
 i samostatná úroveň; spuštění jde přes `EmbeddedTerminalWidget.run_command`). Nalezený soubor otevře
 `PanelWidget.reveal(path)` (kurzor na souboru).
 Prefixy na kořenové úrovni (`parse_mode`): mezera = jen příkazy, `c ` historie terminálu (výběr příkaz jen předvyplní
-do řádky přes `EmbeddedTerminalWidget.prefill`), `a ` soubory i složky, `f ` soubory, `d ` složky. Dotaz interpretuje
+do řádky přes `EmbeddedTerminalWidget.prefill`), `dc ` mazání z historie (položky s `keep_open=True`: `_run_current` je
+spustí, znovu naplní seznam a paletu nezavře; `DatabaseManager.delete_command_history` maže fyzicky: `secure_delete`, `wal_checkpoint(TRUNCATE)`, `VACUUM`, test to hlídá), `a ` soubory i složky, `f ` soubory, `d ` složky. Dotaz interpretuje
 `index/pattern.py`: slova (podřetězce), maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); pro index se
 z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek ověří SQLite funkce REGEXP.
 

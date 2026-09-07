@@ -153,6 +153,7 @@ class DatabaseManager:
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA secure_delete=ON")   # deleted rows are zeroed, not just unlinked
         try:
             yield conn
             conn.commit()
@@ -402,6 +403,31 @@ class DatabaseManager:
                 "INSERT INTO command_history (command, cwd, shell) VALUES (?, ?, ?)",
                 (command, cwd, shell),
             )
+
+    def delete_command_history(self, command: str) -> int:
+        """Remove every occurrence of ``command`` (any cwd / shell) and scrub it
+        from the file: secure_delete zeroes the row, the WAL is checkpointed and
+        truncated, and VACUUM rebuilds the database without the freed pages, so
+        the text is gone from config.db and config.db-wal. Returns the row count."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM command_history WHERE command = ?", (command,))
+            n = cur.rowcount
+        self.scrub()
+        return n
+
+    def scrub(self) -> None:
+        """Physically drop deleted content: fold the WAL into the main file and
+        truncate it, then VACUUM (must run outside a transaction)."""
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False, isolation_level=None)
+        try:
+            conn.execute("PRAGMA secure_delete=ON")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("VACUUM")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass                      # another instance holds a lock: the row is already zeroed anyway
+        finally:
+            conn.close()
 
     def get_command_history(
         self, cwd: str = "", shell: str = "", limit: int = 200

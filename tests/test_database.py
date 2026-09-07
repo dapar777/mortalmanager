@@ -117,3 +117,24 @@ def test_path_history(db: DatabaseManager):
     paths = db.get_path_history()
     assert "C:\\Users" in paths
     assert len(paths) == 3
+
+
+def test_deleted_command_leaves_no_trace_on_disk(tmp_path: Path):
+    db = DatabaseManager(tmp_path / "hist.db")
+    secret = "echo very_secret_token_9f8e7d"
+    for _ in range(3):
+        db.add_command_history(secret, r"C:\x", "CMD")
+    db.add_command_history("dir", r"C:\x", "CMD")
+    assert secret in db.get_command_history(r"C:\x")
+
+    def on_disk() -> bool:
+        blob = b""
+        for f in tmp_path.glob("hist.db*"):
+            blob += f.read_bytes()
+        return b"very_secret_token_9f8e7d" in blob
+
+    assert on_disk()
+    assert db.delete_command_history(secret) == 3
+    assert secret not in db.get_command_history(r"C:\x")
+    assert "dir" in db.get_command_history(r"C:\x")
+    assert not on_disk()

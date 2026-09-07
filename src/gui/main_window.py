@@ -639,13 +639,22 @@ class MainWindow(QMainWindow):
         """Prefix modes: 'c ' terminal history, 'a ' files & folders, 'f ' files, 'd ' folders.
         The query may be words, a *? mask or a regex (index.pattern.parse)."""
         from src.index.pattern import parse
-        if mode == "terminal":
+        if mode in ("terminal", "terminal_delete"):
             sq = parse(query)
-            return [self._terminal_entry(c) for c in self._terminal.history(200) if not query or sq.matches(c)]
+            cmds = [c for c in self._terminal.history(200) if not query or sq.matches(c)]
+            if mode == "terminal_delete":
+                return [self._terminal_delete_entry(c) for c in cmds]
+            return [self._terminal_entry(c) for c in cmds]
         kind = {"all_entries": "all", "files": "files", "dirs": "dirs"}.get(mode)
         if kind and len(query) >= 2:
             return self._file_search(query, 200, kind=kind)
         return []
+
+    def _terminal_delete_entry(self, cmd: str) -> dict:
+        """'dc ' palette mode (delete command): Enter deletes it from the history; the
+        palette stays open so several can be removed in a row."""
+        return {"category": "Delete", "label": cmd, "icon": "trash", "keep_open": True,
+                "run": lambda c=cmd: self._cfg._db.delete_command_history(c)}
 
     def _terminal_entry(self, cmd: str) -> dict:
         return {"category": "Terminal", "label": cmd, "icon": "terminal",
