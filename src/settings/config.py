@@ -53,6 +53,7 @@ class AppConfig:
     editor_font: str = "Consolas"
     editor_font_size: int = 10
     external_editor: str = "code -n"   # F4 command line ({file} = paths); empty = built-in editor
+    copy_suffix: str = " - Kopie"      # Ctrl+V into the same folder: "name - Kopie.ext" (Explorer / TC style)
     left_panel: PanelConfig = field(default_factory=PanelConfig)
     right_panel: PanelConfig = field(default_factory=PanelConfig)
     splitter_ratio: float = 0.5
@@ -109,6 +110,7 @@ class ConfigManager:
         cfg.editor_font = d.get("editor_font", cfg.editor_font)
         cfg.editor_font_size = d.get("editor_font_size", cfg.editor_font_size)
         cfg.external_editor = str(d.get("external_editor", cfg.external_editor))
+        cfg.copy_suffix = str(d.get("copy_suffix", cfg.copy_suffix))
         if cfg.external_editor.strip() == "code":      # old default → open in a new VS Code window
             cfg.external_editor = "code -n"
         cfg.splitter_ratio = d.get("splitter_ratio", cfg.splitter_ratio)
@@ -153,6 +155,7 @@ class ConfigManager:
         self._db.set_setting("editor_font", cfg.editor_font)
         self._db.set_setting("editor_font_size", cfg.editor_font_size)
         self._db.set_setting("external_editor", cfg.external_editor)
+        self._db.set_setting("copy_suffix", cfg.copy_suffix)
         self._db.set_setting("splitter_ratio", cfg.splitter_ratio)
         self._db.set_setting("window_width", cfg.window_width)
         self._db.set_setting("window_height", cfg.window_height)

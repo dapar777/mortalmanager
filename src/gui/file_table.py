@@ -391,6 +391,7 @@ class FileTableView(QTableView):
     space_pressed = Signal(object)     # FileEntry – toggle selection (Space / Insert)
     toggle_rows = Signal(list)         # [FileEntry] – toggle each (Shift+cursor keys, Ctrl+click)
     cmdline_insert = Signal(str)       # Ctrl+Enter = name, Ctrl+Shift+Enter = full path → terminal line
+    clipboard_requested = Signal(str)  # "copy" | "cut" | "paste" (Ctrl+C / Ctrl+X / Ctrl+V)
     mark_rows = Signal(list)           # [FileEntry] – select each (Shift+click range)
     sort_requested = Signal(object)    # SortField (header click)
     filter_requested = Signal(str)     # '*' typed: open the quick filter (with initial text)
@@ -619,6 +620,14 @@ class FileTableView(QTableView):
                 self.setCurrentIndex(self.model().index(last_row, 0))
                 self.scrollToBottom()
             return
+
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier and not mods & (
+                Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.AltModifier):
+            action = {Qt.Key.Key_C: "copy", Qt.Key.Key_X: "cut", Qt.Key.Key_V: "paste"}.get(key)
+            if action:
+                self.clipboard_requested.emit(action)
+                return
 
         text = event.text()
         ctrl_alt = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)

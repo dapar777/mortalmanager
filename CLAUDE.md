@@ -166,5 +166,11 @@ z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek
 - Nový widget s pevnou šířkou v hlavičce/panelu ověř v úzkém okně (`MIN_WINDOW_WIDTH` 350 px): dlouhé popisky
   mají `QSizePolicy.Ignored` vodorovně.
 
+Schránka se soubory: `FileTableView` Ctrl+C/X/V → signál `clipboard_requested` → panel → `MainWindow._clip_copy` /
+`_clip_paste`; `gui/file_clipboard.py` dává na systémovou schránku URL souborů + Explorerový „Preferred DropEffect“
+(copy/move), takže funguje i mezi UC a Explorerem; vložení do téže složky pojmenuje `core/naming.copy_target`
+(„název - Kopie.ext“, `AppConfig.copy_suffix`) a jde jako COPY job s plnou cílovou cestou (`_copy_one` bere
+neexistující cíl jako jméno souboru).
+
 Konvence: Qt widgety komunikují signály, ne přímými voláními do rodiče; stav, který má přežít restart, patří do
 `DatabaseManager`, ne do souborů; `FileEntry.full_path` je jediný zdroj cesty položky.
