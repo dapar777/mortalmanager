@@ -33,7 +33,7 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Tmavé / světlé téma | ikona v hlavičce, menu *Show → Dark Theme* |
 | Paleta příkazů (víceúrovňová: řazení, disky, taby, oblíbené, historie, téma, zoom; nahoře naposledy použité; od 3 znaků i soubory z indexu a příkazy z historie terminálu) |
 | Prefixy palety | mezera = jen příkazy, `c ` historie terminálu (předvyplní řádku), `a ` soubory+složky, `f ` soubory, `d ` složky; dotaz může být maska `*.txt` nebo regex | Ctrl+Shift+P, Backspace = o úroveň zpět |
-| Enter na souboru | spustitelné soubory se spustí: `.exe` `.com` `.msi` `.lnk` `.jar` `.vbs` `.js` … přes shell, `.bat` / `.cmd` / `.ps1` v novém konzolovém okně, které zůstane otevřené; text a obrázky v prohlížeči, ostatní přes asociaci; F3 zobrazí vždy |
+| Enter na souboru | `.lnk` na složku (i síťovou) přejde do složky; spustitelné soubory se spustí: `.exe` `.com` `.msi` `.lnk` `.jar` `.vbs` `.js` … přes shell, `.bat` / `.cmd` / `.ps1` v novém konzolovém okně, které zůstane otevřené; text a obrázky v prohlížeči, ostatní přes asociaci; F3 zobrazí vždy |
 | Přejmenovat v místě / hromadně | F2 (Shift+F6) / Ctrl+M |
 | Cesta u tabů | vedle tabů je klikací drobečková cesta „C: › Users › dapar“, klik na část = přechod do ní; při nedostatku místa se začátek složí do „…“ s menu |
 | Nové okno (další instance) | ikona vedle přepínače tématu, *Files → New Window*, paleta „App › New window“ |
@@ -44,10 +44,10 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Rychlý filtr seznamu (jako v TC) | Ctrl+S nebo `*`, Esc zruší, Enter zpět do seznamu |
 | Kontextové menu | pravé tlačítko; nahoře sekce nejčastěji používaných položek; na `..` nebo prázdné ploše menu aktuální složky (včetně shell menu Windows) jako v TC |
 | Cesta / oblíbené / nový tab | Ctrl+L / Ctrl+D / Ctrl+T |
-| Přepnutí disku | lišta disků v hlavičce, Alt+F1 / Alt+F2 = menu disků pro levý / pravý panel, paleta „Go to drive C:“, v terminálu `d:` nebo `cd /d D:\cesta` (panel jde s ním) |
+| Přepnutí disku | lišta disků v hlavičce (včetně síťových, ty se ale nikdy neindexují), Alt+F1 / Alt+F2 = menu disků pro levý / pravý panel, paleta „Go to drive C:“, v terminálu `d:` nebo `cd /d D:\cesta` (panel jde s ním) |
 | Editor | F4 = externí editor (výchozí `code -n`, tj. nové okno VS Code, nastavení *Commands → External Editor…*, `{file}` = místo pro cesty; prázdné = vestavěný), *Files → Edit in Built-in Editor* |
 | Soubory z panelu v příkazové řádce | Ctrl+Enter vloží jméno, Ctrl+Shift+Enter celou cestu; zástupné znaky `%N` (pod kurzorem), `%P` / `%T` (složka aktivního / druhého panelu), `%S` / `%R` (označené: jména / celé cesty), `%SI` / `%RI` (příkaz se spustí pro každou označenou položku zvlášť), `%%`; platí i pro řádky posílané do interaktivního `python` / `node`, tam bez uvozovek (`print('%SI')`) |
-| Terminál | Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat, `python` / `node` běží interaktivně (řádky jdou do něj, ukládají se do historie pod jménem programu, Ctrl+D konec, Ctrl+C kill), `cmd` / `powershell` / `vim` / `ssh` se otevřou v novém okně, Alt++ / Alt+− dočasně zvětší / zmenší výstup (vrátí se při odchodu fokusu z terminálu) |
+| Terminál | trvalá shell session (cmd / PowerShell / Git Bash běží pořád, `set` / `$env:` / `export` přežijí mezi příkazy, výstup jde průběžně, `cd` v shellu posune panel), tlačítko ↻ nebo Ctrl+C na běžícím příkazu = nová session; Ctrl+Down (do terminálu), Ctrl+Up (zpět), Ctrl+E vymazat, `python` / `node` běží interaktivně (řádky jdou do něj, ukládají se do historie pod jménem programu, Ctrl+D konec, Ctrl+C kill), `cmd` / `powershell` / `vim` / `ssh` se otevřou v novém okně, Alt++ / Alt+− dočasně zvětší / zmenší výstup (vrátí se při odchodu fokusu z terminálu) |
 
 Barvy v kódu: pouze v `src/solarqt/theme.py` (`tests/test_theme.py` to hlídá). Stav git/svn se ukazuje jako
 sémantická tečka na ikoně (žlutá = změněno, modrá = nesledováno, zelená = přidáno, červená = smazáno/konflikt).

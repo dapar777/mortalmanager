@@ -54,7 +54,8 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `OperationProgress` (`file_model.py`), `SelectionManager`, `NavigationHistory` (zpět/vpřed),
   `UndoManager` (zásobník vratných souborových operací).
 - **`filesystem/`** — `FileSystemProvider` (ABC) s async metodami; `LocalFileSystemProvider` je Windows-optimalizovaný
-  (výpis adresáře jedním `os.scandir` průchodem bez stat() na soubor, koš, typy disků, hledání, výpočet velikosti),
+  (výpis adresáře jedním `os.scandir` průchodem bez stat() na soubor, koš, disky přes `GetLogicalDriveStrings` +
+  `GetDriveType` – `psutil.disk_partitions` síťové disky vynechává –, hledání, výpočet velikosti),
   `DirectoryWatcher` emituje `directory_changed(str)`. FTP/SFTP (`ftp/`) jsou samostatní klienti, ne provider.
 - **`jobs/`** — `JobQueue` (QObject) běží nad **asyncio smyčkou**, kterou `src/main.py` pumpuje z Qt `QTimer`
   každých 20 ms. Dlouhé operace se odesílají jako `JobSpec(job_type: JobType, sources, destination, options)`
@@ -83,7 +84,11 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   každém widgetu, který drží barvu/velikost mimo QSS (IconButton, tabulka, panel, terminál…).
 - **`gui/`** — `MainWindow`: `#headerBar` (logo z `assets/icons`, název, `DriveBar` – disky enumeruje worker
   v `QThreadPool`, „Search“, „Commands“, tlačítko nového okna = `_new_instance` (další proces `-m src.main`), přepínač tématu) · splitter dvou `PanelWidget` + `#fkeysBar` ·
-  `EmbeddedTerminalWidget` (příkazy běží po jednom se zachyceným výstupem, timeout 30 s; zástupné znaky
+  `EmbeddedTerminalWidget` (`shell_session.py` `ShellSession` = **trvalý** cmd/powershell/bash proces s rourami: každý
+  příkaz následuje sentinel `__UC_DONE__ rc cwd`, výstup streamuje, cmd má obě roury v OEM kódování (`chcp 65001` rozbije
+  vstup) a prompt `__UCP__`, který se odstraňuje; PowerShell přes smyčku `Invoke-Expression` po řádcích,
+  `-Command -` by čekalo na EOF; `restart_shell()` = tlačítko ↻ / Ctrl+C na běžícím příkazu; `_CmdRunner` zůstal jen
+  jako záloha, když se shell nespustí; zástupné znaky
   `%N %P %T %S %R %SI %RI` rozbaluje čistý `core/cmdline.py` (`expand` → seznam příkazů, `%SI`/`%RI` = jeden
   na označenou položku, terminál je pouští za sebou přes `_queue`) z `CmdContext`, který dodává
   `MainWindow._terminal_context`; Ctrl+Enter / Ctrl+Shift+Enter v tabulce = signál `cmdline_insert` → `insert_text`; v REPL sezení se
@@ -102,7 +107,7 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   segmenty cesty, signál `path_clicked` → `navigate_to`, úvodní segmenty se při nedostatku místa složí do „…“ s menu,
   QSS `#breadcrumb`) + `FileTableView` + patička. Adresář načítá asynchronně s **generací**
   (pomalý výpis nikdy nepřepíše novější), VCS root/status detekuje `_VcsInfo` v executoru s cache na kořen
-  repa (nikdy subprocess z GUI vlákna). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `_EXEC_EXTENSIONS` se spustí
+  repa (nikdy subprocess z GUI vlákna). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `.lnk` na složku = `navigate_to` cíle (`filesystem/shortcut.py`, IShellLink), `_EXEC_EXTENSIONS` se spustí
   přes `_run_file` – bat/cmd v novém okně `cmd /K`, ps1 přes `powershell -NoExit -File` –, text/obrázky do prohlížeče, zbytek `os.startfile`),
   `status_info`, `request_focus`, `favorites_requested`. `FileTableModel` bere barvy z `_Look` (cache per téma),
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.

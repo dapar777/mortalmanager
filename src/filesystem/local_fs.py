@@ -218,29 +218,46 @@ class LocalFileSystemProvider(FileSystemProvider):
     # ------------------------------------------------------------------ drives
 
     def get_drives(self) -> list[DriveInfo]:
+        """Every logical drive letter, mapped network drives included
+        (psutil.disk_partitions(all=False) drops DRIVE_REMOTE). A drive whose
+        usage cannot be read (empty CD, disconnected share) is listed with zeros."""
         drives: list[DriveInfo] = []
         if _HAS_WIN32:
             try:
-                import psutil
-                for part in psutil.disk_partitions(all=False):
+                roots = [r for r in win32api.GetLogicalDriveStrings().split("\x00") if r]
+            except Exception:
+                roots = []
+            for root in roots:
+                try:
+                    dtype = self._win_drive_type(root)
+                    if dtype in ("UNKNOWN", "NO_ROOT"):
+                        continue
+                    total = free = 0
+                    fs = ""
                     try:
-                        usage = psutil.disk_usage(part.mountpoint)
-                        dtype = self._win_drive_type(part.device)
-                        drives.append(
-                            DriveInfo(
-                                letter=part.device.rstrip(":\\").rstrip(":"),
-                                label=self._win_volume_label(part.mountpoint),
-                                drive_type=dtype,
-                                total=usage.total,
-                                free=usage.free,
-                                filesystem=part.fstype,
-                                root=part.mountpoint,
-                            )
-                        )
+                        import psutil
+                        usage = psutil.disk_usage(root)
+                        total, free = usage.total, usage.free
+                    except Exception:
+                        if dtype != "NETWORK":
+                            continue          # empty card reader / CD tray: not worth a button
+                    try:
+                        fs = win32api.GetVolumeInformation(root)[4] or ""
                     except Exception:
                         pass
-            except Exception:
-                pass
+                    drives.append(
+                        DriveInfo(
+                            letter=root.rstrip("\\").rstrip(":"),
+                            label=self._win_volume_label(root),
+                            drive_type=dtype,
+                            total=total,
+                            free=free,
+                            filesystem=fs,
+                            root=root,
+                        )
+                    )
+                except Exception:
+                    pass
         else:
             import psutil
             for part in psutil.disk_partitions(all=False):
@@ -270,6 +287,7 @@ class LocalFileSystemProvider(FileSystemProvider):
             win32con.DRIVE_REMOTE: "NETWORK",
             win32con.DRIVE_CDROM: "CDROM",
             win32con.DRIVE_RAMDISK: "RAMDISK",
+            1: "NO_ROOT",                       # DRIVE_NO_ROOT_DIR – letter without a mounted volume
         }
         t = win32file.GetDriveType(device)
         return type_map.get(t, "UNKNOWN")

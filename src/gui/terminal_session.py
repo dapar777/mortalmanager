@@ -74,10 +74,20 @@ def classify(cmd: str) -> str:
     return "plain"
 
 
+_DIRECT_SHELLS = {"cmd", "powershell", "pwsh", "wsl", "bash"}
+
+
 def open_in_console(cmd: str, cwd: str) -> None:
-    """Run ``cmd`` in a fresh console window (closes when the program ends)."""
+    """Run ``cmd`` in a fresh console window in ``cwd`` (closes when the program
+    ends). Shells start directly – ``cmd`` typed in the terminal is a plain
+    cmd.exe window, not ``cmd /c cmd`` – other programs go through the shell so
+    PATH / .bat / .cmd resolution works as on a command line."""
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-    subprocess.Popen(cmd, shell=True, cwd=cwd, creationflags=flags)
+    toks = _tokens(cmd)
+    if toks and _stem(toks[0]) in _DIRECT_SHELLS:
+        subprocess.Popen(toks, cwd=cwd, creationflags=flags)
+    else:
+        subprocess.Popen(cmd, shell=True, cwd=cwd, creationflags=flags)
 
 
 class ReplSession(QObject):

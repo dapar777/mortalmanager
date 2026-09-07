@@ -24,6 +24,7 @@ from src.core.cmdline import CmdContext, expand, has_placeholders, quote
 from src.database.db import DatabaseManager
 from src.solarqt import theme
 from src.solarqt.widgets import IconButton
+from .shell_session import ShellSession
 from .terminal_session import ReplSession, classify, open_in_console
 
 
@@ -105,6 +106,8 @@ class EmbeddedTerminalWidget(QFrame):
         self._hist_idx = -1
         self._hist_saved = ""
         self._session: ReplSession | None = None   # interactive child (python, node…) taking the input lines
+        self._shell: ShellSession | None = None     # persistent cmd / powershell / bash (env vars survive)
+        self._shell_restarting = False
         self._context: Callable[[], CmdContext] | None = None   # panels' state for %N %P %T %S %R (main window)
         self._queue: list[str] = []                # remaining commands of a %SI / %RI run
         self._echo_expanded = False
@@ -155,10 +158,52 @@ class EmbeddedTerminalWidget(QFrame):
             self._session.kill()
 
     def shutdown(self) -> None:
-        """Window is closing – do not leave a REPL behind."""
+        """Window is closing – do not leave a REPL or the shell behind."""
         if self._session is not None:
             s, self._session = self._session, None
             s.kill()
+        self._drop_shell()
+
+    def restart_shell(self) -> None:
+        """Toolbar button / palette / Ctrl+C on a stuck command: kill the shell
+        process (its variables, doskeys, pushd stack go with it) and start a
+        fresh one on the next command."""
+        self._queue.clear()
+        self._drop_shell()
+        self._write(f"  [new {self.current_shell()} session]", "muted")
+        self._ensure_shell()
+
+    def shell_busy(self) -> bool:
+        return self._shell is not None and self._shell.busy()
+
+    def _drop_shell(self) -> None:
+        if self._shell is None:
+            return
+        sh, self._shell = self._shell, None
+        self._shell_restarting = True
+        try:
+            sh.output.disconnect(self._write_raw)
+            sh.finished.disconnect(self._on_shell_finished)
+        except (RuntimeError, TypeError):
+            pass
+        sh.died.connect(sh.deleteLater)    # free the object once its reader threads are done
+        sh.kill()
+
+    def _ensure_shell(self) -> ShellSession | None:
+        if self._shell is not None and self._shell.alive():
+            return self._shell
+        self._shell = None
+        try:
+            sh = ShellSession(self.current_shell(), self._cwd, self._find_git_bash(), self)
+        except Exception as exc:
+            self._write(f"  [cannot start {self.current_shell()}: {exc}]", "danger")
+            return None
+        sh.output.connect(self._write_raw)
+        sh.finished.connect(self._on_shell_finished)
+        sh.died.connect(self._on_shell_died)
+        self._shell_restarting = False
+        self._shell = sh
+        return sh
 
     def run_command(self, cmd: str) -> None:
         """Execute ``cmd`` as if typed."""
@@ -230,12 +275,15 @@ class EmbeddedTerminalWidget(QFrame):
         self._input.returnPressed.connect(self._on_return)
         self._input.installEventFilter(self)
 
+        btn_restart = IconButton("rotate", "New shell session (kills the current shell – variables are lost)")
+        btn_restart.clicked.connect(self.restart_shell)
         btn_clear = IconButton("trash", "Clear output (Ctrl+E)")
         btn_clear.clicked.connect(self.clear_output)
 
         rl.addWidget(self._shell_combo)
         rl.addWidget(self._prompt_lbl)
         rl.addWidget(self._input, stretch=1)
+        rl.addWidget(btn_restart)
         rl.addWidget(btn_clear)
         layout.addWidget(row)
         self.retheme()
@@ -254,6 +302,8 @@ class EmbeddedTerminalWidget(QFrame):
     def _on_shell_changed(self, shell: str) -> None:
         self._write(f"[{shell}]", "muted")
         self._hist_idx = -1
+        self._queue.clear()
+        self._drop_shell()
 
     def _color(self, kind: str) -> QColor:
         t = theme.current()
@@ -347,17 +397,43 @@ class EmbeddedTerminalWidget(QFrame):
             return
         if kind == "console":
             try:
-                open_in_console(cmd, self._cwd)
-                self._write(f"  [{parts[0]} needs a real console – opened in a new window]", "muted")
+                open_in_console(cmd, self._cwd)      # silently – a new console window is the whole point
             except Exception as exc:
                 self._write(f"  Error: {exc}", "danger")
             self._next_queued()
             return
         self._token = object()             # a late result of an older command must not drain the queue
+        sh = self._ensure_shell()
+        if sh is not None:
+            if sh.busy():
+                self._write("  [previous command still running – Ctrl+C or the restart button kills it]", "warning")
+                return
+            sh.run(cmd, self._cwd, self._token)
+            return
         runner = _CmdRunner(cmd, shell, self._find_git_bash(), self._cwd, self._token)
         runner.signals.finished.connect(self._on_finished)
         runner.setAutoDelete(True)
         self._pool.start(runner)
+
+    def _on_shell_finished(self, rc: int, cwd: str, token: object) -> None:
+        if not self._at_line_start:
+            self._write_raw("\n")
+        if rc != 0:
+            self._write(f"  [exit {rc}]", "warning")
+        if cwd and os.path.normcase(cwd) != os.path.normcase(self._cwd) and os.path.isdir(cwd):
+            self._cwd = cwd                   # cd / pushd typed into the shell: follow it
+            self._update_prompt()
+            self.cwd_changed.emit(self._cwd)
+        if token is self._token:
+            self._next_queued()
+
+    def _on_shell_died(self, rc: int) -> None:
+        if self._shell_restarting:
+            self._shell_restarting = False
+            return
+        self._shell = None
+        self._queue.clear()
+        self._write(f"  [{self.current_shell()} exited {rc} – a new session starts with the next command]", "warning")
 
     # ------------------------------------------------------------------ interactive session
 
@@ -448,6 +524,11 @@ class EmbeddedTerminalWidget(QFrame):
                     self._write("  ^C", "muted")
                     self._session.kill()
                     return True
+            if (key == Qt.Key.Key_C and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                    and not self._input.hasSelectedText() and self.shell_busy()):
+                self._write("  ^C", "muted")
+                self.restart_shell()
+                return True
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and \
                     event.modifiers() & Qt.KeyboardModifier.ControlModifier and self._context is not None:
                 ctx = self._context()

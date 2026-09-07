@@ -888,6 +888,7 @@ class MainWindow(QMainWindow):
             e("Tools", "Clear embedded terminal", self._terminal.clear_output, self._cfg.config.cmd_expand_shortcut),
             e("Tools", "Kill interactive terminal program", self._kill_terminal_session, "Ctrl+C in terminal",
               icon="terminal"),
+            e("Tools", "New terminal shell session (drops variables)", self._terminal.restart_shell, icon="rotate"),
             e("Tools", "Insert file name into command line", lambda: self._insert_cursor_into_terminal(False),
               "Ctrl+Enter", icon="terminal"),
             e("Tools", "Insert full path into command line", lambda: self._insert_cursor_into_terminal(True),
@@ -1311,6 +1312,13 @@ class MainWindow(QMainWindow):
         viewer, everything else goes to the shell default."""
         from src.viewer.file_viewer import _IMAGE_EXTENSIONS, _TEXT_EXTENSIONS, FileViewerWindow
         ext = entry.extension.lower()
+        if ext == "lnk":
+            # a shortcut to a folder (local or network share) is entered like a folder, as in Total Commander
+            from src.filesystem.shortcut import shortcut_folder
+            folder = shortcut_folder(entry.full_path)
+            if folder:
+                self._active_panel_widget.navigate_to(folder)
+                return
         if ext in self._EXEC_EXTENSIONS:
             self._run_file(entry.full_path)
         elif ext in _TEXT_EXTENSIONS or ext in _IMAGE_EXTENSIONS:
