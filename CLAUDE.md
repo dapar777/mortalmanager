@@ -96,7 +96,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   další se během 220 ms slučují, protože `theme.apply` + repolish celého okna stojí 150–300 ms. Zoom i téma se
   persistují do configu. Pod `theme.HEADER_COMPACT_BELOW` (1100 px × zoom) se schovají texty v hlavičce a v F-liště.
   `PanelWidget` = `QFrame#panel` s property `active` (aktivní = akcentový rámeček): hlavička (zpět/vpřed/nahoru,
-  `#pathEdit`, refresh, oblíbené) + `QTabBar` + `FileTableView` + patička. Adresář načítá asynchronně s **generací**
+  `#pathEdit`, refresh, oblíbené) + řádek `QTabBar` (jen šířka tabů) + `gui/breadcrumb.py` `Breadcrumb` (klikací
+  segmenty cesty, signál `path_clicked` → `navigate_to`, úvodní segmenty se při nedostatku místa složí do „…“ s menu,
+  QSS `#breadcrumb`) + `FileTableView` + patička. Adresář načítá asynchronně s **generací**
   (pomalý výpis nikdy nepřepíše novější), VCS root/status detekuje `_VcsInfo` v executoru s cache na kořen
   repa (nikdy subprocess z GUI vlákna). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `_EXEC_EXTENSIONS` se spustí
   přes `_run_file` – bat/cmd v novém okně `cmd /K`, ps1 přes `powershell -NoExit -File` –, text/obrázky do prohlížeče, zbytek `os.startfile`),

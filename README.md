@@ -35,6 +35,7 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Prefixy palety | mezera = jen příkazy, `c ` historie terminálu (předvyplní řádku), `a ` soubory+složky, `f ` soubory, `d ` složky; dotaz může být maska `*.txt` nebo regex | Ctrl+Shift+P, Backspace = o úroveň zpět |
 | Enter na souboru | spustitelné soubory se spustí: `.exe` `.com` `.msi` `.lnk` `.jar` `.vbs` `.js` … přes shell, `.bat` / `.cmd` / `.ps1` v novém konzolovém okně, které zůstane otevřené; text a obrázky v prohlížeči, ostatní přes asociaci; F3 zobrazí vždy |
 | Přejmenovat v místě / hromadně | F2 (Shift+F6) / Ctrl+M |
+| Cesta u tabů | vedle tabů je klikací drobečková cesta „C: › Users › dapar“, klik na část = přechod do ní; při nedostatku místa se začátek složí do „…“ s menu |
 | Přepnutí panelu | Tab |
 | Označení souborů (jako v TC) | Insert / mezerník (přepne a posune kurzor), Shift+šipky / PgUp / PgDn / Home / End, Shift+klik = rozsah, Ctrl+klik = přepnout, Ctrl+A, Num +/−/\* |
 | Kopírovat názvy / celé cesty do schránky | Ctrl+Shift+C / Ctrl+Alt+C (menu Mark) |

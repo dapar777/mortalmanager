@@ -594,6 +594,11 @@ QGroupBox::title {{ subcontrol-origin: margin; left: {p(10)}px; padding: 0 {p(4)
 
 QTabWidget::pane {{ border: 1px solid {t.line}; border-radius: {r_md}px; top: -1px; background: {t.card}; }}
 QTabBar {{ background: transparent; }}
+/* path breadcrumb next to the panel tabs: flat segments, current one in full text colour */
+QWidget#breadcrumb QPushButton#crumb, QWidget#breadcrumb QPushButton#crumbMore {{ border: 0; background: transparent; padding: {p(3)}px {p(5)}px; min-width: 0; color: {t.text2}; font-weight: 600; border-radius: {r_sm}px; }}
+QWidget#breadcrumb QPushButton#crumb[current="true"] {{ color: {t.text}; }}
+QWidget#breadcrumb QPushButton#crumb:hover, QWidget#breadcrumb QPushButton#crumbMore:hover {{ background: {t.hover}; color: {t.text}; }}
+QWidget#breadcrumb QLabel#crumbSep {{ padding: 0; margin: 0 -{p(2)}px; }}
 QTabBar::tab {{ padding: {p(5)}px {p(12)}px; margin-right: {p(2)}px; color: {t.text2}; border: 0; border-bottom: {p(2)}px solid transparent; background: transparent; font-weight: 600; }}
 QTabBar::tab:hover {{ color: {t.text}; }}
 QTabBar::tab:selected {{ color: {t.text}; border-bottom: {p(2)}px solid {t.accent}; }}

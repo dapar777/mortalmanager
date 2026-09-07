@@ -42,6 +42,7 @@ from src.filesystem.watcher import DirectoryWatcher
 from src.settings.config import ConfigManager
 from src.solarqt import icons, theme, widgets
 from src.solarqt.widgets import IconButton, SearchField
+from .breadcrumb import Breadcrumb
 from .file_table import FileTableView
 
 logger = logging.getLogger(__name__)
@@ -316,11 +317,15 @@ class PanelWidget(QFrame):
         self._tab_bar.setDrawBase(False)
         self._tab_bar.setUsesScrollButtons(True)
         self._tab_bar.setElideMode(Qt.TextElideMode.ElideRight)
-        self._tab_bar.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._tab_bar.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._tab_bar.currentChanged.connect(self._on_tab_changed)
         self._tab_bar.tabCloseRequested.connect(self._close_tab)
         self._tab_bar.tabMoved.connect(self._on_tab_moved)
-        tab_row.addWidget(self._tab_bar, 1)
+        tab_row.addWidget(self._tab_bar, 0)
+        # clickable full path of the current tab ("C: › Users › dapar"), takes the rest of the row
+        self._crumb = Breadcrumb()
+        self._crumb.path_clicked.connect(self.navigate_to)
+        tab_row.addWidget(self._crumb, 1)
         self._btn_new_tab = IconButton("plus", "New tab (Ctrl+T)")
         self._btn_new_tab.clicked.connect(self._new_tab_from_current)
         tab_row.addWidget(self._btn_new_tab)
@@ -459,6 +464,7 @@ class PanelWidget(QFrame):
         tab.path = resolved
         self._path_edit.setText(resolved)
         self._path_edit.setCursorPosition(0)   # narrow field: show the drive, not the tail
+        self._crumb.set_path(resolved)
         self._path_edit.setProperty("invalid", "false")
         widgets.repolish(self._path_edit)
         label = Path(resolved).name or resolved
