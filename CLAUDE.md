@@ -55,7 +55,8 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `UndoManager` (zásobník vratných souborových operací).
 - **`filesystem/`** — `FileSystemProvider` (ABC) s async metodami; `LocalFileSystemProvider` je Windows-optimalizovaný
   (výpis adresáře jedním `os.scandir` průchodem bez stat() na soubor, koš, disky přes `GetLogicalDriveStrings` +
-  `GetDriveType` – `psutil.disk_partitions` síťové disky vynechává –, hledání, výpočet velikosti),
+  `GetDriveType` – `psutil.disk_partitions` síťové disky vynechává; `filesystem/drives.get_all_drives`, které používá
+  `DriveBar`, na to jen deleguje –, hledání, výpočet velikosti),
   `DirectoryWatcher` emituje `directory_changed(str)`. FTP/SFTP (`ftp/`) jsou samostatní klienti, ne provider.
 - **`jobs/`** — `JobQueue` (QObject) běží nad **asyncio smyčkou**, kterou `src/main.py` pumpuje z Qt `QTimer`
   každých 20 ms. Dlouhé operace se odesílají jako `JobSpec(job_type: JobType, sources, destination, options)`
