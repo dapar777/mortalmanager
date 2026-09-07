@@ -29,7 +29,7 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Tmavé / světlé téma | ikona v hlavičce, menu *Show → Dark Theme* |
 | Paleta příkazů (víceúrovňová: řazení, disky, taby, oblíbené, historie, téma, zoom; nahoře naposledy použité; od 3 znaků i soubory z indexu a příkazy z historie terminálu) |
 | Prefixy palety | mezera = jen příkazy, `c ` historie terminálu (předvyplní řádku), `a ` soubory+složky, `f ` soubory, `d ` složky; dotaz může být maska `*.txt` nebo regex | Ctrl+Shift+P, Backspace = o úroveň zpět |
-| Enter na souboru | `.exe` / `.bat` / `.cmd` / `.msi` / `.lnk` se spustí (bat/cmd v novém konzolovém okně, které zůstane otevřené), text a obrázky v prohlížeči, ostatní přes shell; F3 zobrazí vždy |
+| Enter na souboru | spustitelné soubory se spustí: `.exe` `.com` `.msi` `.lnk` `.jar` `.vbs` `.js` … přes shell, `.bat` / `.cmd` / `.ps1` v novém konzolovém okně, které zůstane otevřené; text a obrázky v prohlížeči, ostatní přes asociaci; F3 zobrazí vždy |
 | Přejmenovat v místě / hromadně | F2 (Shift+F6) / Ctrl+M |
 | Přepnutí panelu | Tab |
 | Označení souborů (jako v TC) | Insert / mezerník (přepne a posune kurzor), Shift+šipky / PgUp / PgDn / Home / End, Shift+klik = rozsah, Ctrl+klik = přepnout, Ctrl+A, Num +/−/\* |

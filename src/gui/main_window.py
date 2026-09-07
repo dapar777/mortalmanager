@@ -1282,7 +1282,11 @@ class MainWindow(QMainWindow):
         self._free_label.setText(DriveBar.free_text(d))
 
     # Enter runs these (Total Commander); F3 still views a .bat / .cmd as text
-    _EXEC_EXTENSIONS = frozenset({"exe", "com", "bat", "cmd", "msi", "lnk", "vbs", "wsf", "scr"})
+    _EXEC_EXTENSIONS = frozenset({
+        "exe", "com", "scr", "pif", "lnk", "msi", "msix", "appx",       # binaries, shortcuts, installers
+        "bat", "cmd", "ps1",                                           # shells (new console window)
+        "vbs", "vbe", "js", "jse", "wsf", "wsh", "jar", "ahk",          # script hosts (shell association)
+    })
 
     def _on_entry_open(self, entry: FileEntry) -> None:
         """Enter on a file: executables run, known text/images open in the
@@ -1304,6 +1308,9 @@ class MainWindow(QMainWindow):
             if path.lower().endswith((".bat", ".cmd")):
                 subprocess.Popen(["cmd.exe", "/K", path], cwd=folder,
                                  creationflags=subprocess.CREATE_NEW_CONSOLE)
+            elif path.lower().endswith(".ps1"):
+                subprocess.Popen(["powershell.exe", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", path],
+                                 cwd=folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
             else:
                 os.startfile(path, cwd=folder)
         except Exception as exc:

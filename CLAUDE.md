@@ -96,7 +96,7 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `#pathEdit`, refresh, oblíbené) + `QTabBar` + `FileTableView` + patička. Adresář načítá asynchronně s **generací**
   (pomalý výpis nikdy nepřepíše novější), VCS root/status detekuje `_VcsInfo` v executoru s cache na kořen
   repa (nikdy subprocess z GUI vlákna). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `_EXEC_EXTENSIONS` se spustí
-  přes `_run_file` – bat/cmd v novém okně `cmd /K` –, text/obrázky do prohlížeče, zbytek `os.startfile`),
+  přes `_run_file` – bat/cmd v novém okně `cmd /K`, ps1 přes `powershell -NoExit -File` –, text/obrázky do prohlížeče, zbytek `os.startfile`),
   `status_info`, `request_focus`, `favorites_requested`. `FileTableModel` bere barvy z `_Look` (cache per téma),
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
