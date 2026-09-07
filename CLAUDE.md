@@ -99,7 +99,7 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   prompty `>>> `/`... ` se odloupnou do popisku řádky, Ctrl+D = EOF, Ctrl+C = kill, řádky do DB historie pod jménem REPL, `shutdown()` při zavření okna)
   a konzolové programy (`cmd`, `powershell`, `vim`, `ssh`… → nové konzolové okno); Alt++ / Alt+− v řádce = signál `height_step`, `MainWindow._terminal_height_step`
   dočasně přenastaví `_v_splitter`, `_on_focus_changed` přes `QApplication.focusChanged` vrátí původní výšku, jakmile
-  fokus opustí terminál) · stavový řádek (info aktivního panelu, zoom %, volné místo). Zoom: Ctrl+kolečko
+  fokus opustí terminál) · stavový řádek (info aktivního panelu, zoom %, volné místo). Titulek okna = cesta aktivního panelu + název (`_update_title` při změně cesty i panelu). Zoom: Ctrl+kolečko
   (globální event filter), Ctrl+±, Ctrl+0; `_zoom_step` je **throttlovaný** – první notch se aplikuje hned,
   další se během 220 ms slučují, protože `theme.apply` + repolish celého okna stojí 150–300 ms. Zoom i téma se
   persistují do configu. Pod `theme.HEADER_COMPACT_BELOW` (1100 px × zoom) se schovají texty v hlavičce a v F-liště.

@@ -520,8 +520,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_drive_bar"):
             self._drive_bar.set_current_path(self._active_panel_widget.current_path)
             self._update_free_label()
+        self._update_title()
         if self.isVisible():
             self._active_panel_widget.give_focus()
+
+    def _update_title(self) -> None:
+        """Window title = current path of the active panel + app name (taskbar / Alt+Tab)."""
+        path = getattr(self._active_panel_widget, "current_path", "") if hasattr(self, "_left_panel") else ""
+        self.setWindowTitle(f"{path} – Ultimate Commander" if path else "Ultimate Commander")
 
     def _switch_panel(self) -> None:
         self._set_active("right" if self._active_panel == "left" else "left")
@@ -1293,6 +1299,7 @@ class MainWindow(QMainWindow):
 
     def _on_path_changed(self, side: str, path: str) -> None:
         if side == self._active_panel:
+            self._update_title()
             if hasattr(self, "_terminal"):
                 self._terminal.set_cwd(path)
             if hasattr(self, "_drive_bar"):
