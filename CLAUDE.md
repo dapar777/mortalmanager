@@ -12,18 +12,21 @@ editor F4, vestavěný terminál, command palette, VCS tečky u souborů, zoom U
 ## Příkazy
 
 Aplikace se spouští jako modul z kořene repa (`src/main.py` si sám přidá kořen do `sys.path`). Na stroji autora
-je venv v `C:\mm_venv` (Python 3.12, PySide6, pytest); `restart.bat` zabije **všechny** běžící python/pythonw procesy
-s `src.main` v příkazové řádce a spustí novou instanci přes `pythonw.exe` (bez konzole; `src/main.py` pak loguje do
-`%APPDATA%\MortalManager\mortalmanager.log`). `pyproject` má `[project.gui-scripts]`, ne `scripts`. Venv stojí na **Pythonu z Microsoft Store (MSIX)** – hlavní panel
+je venv v `C:\mm_venv` (Python 3.12, PySide6, pytest); `start.bat` / `restart.bat` ale Python hledají přes
+`find_python.bat` (`MM_PYTHON`, `.venv`/`venv` vedle repa, `C:\mm_venv`, `pythonw.exe` v PATH – první, kde jde
+`import PySide6`), takže na cizím PC stačí venv vedle projektu; žádná cesta nesmí být v .bat natvrdo.
+`restart.bat` zabije **všechny** běžící python/pythonw procesy s `src.main` v příkazové řádce (PowerShell
+`Get-CimInstance`, ne `wmic` – to v novém Windows 11 chybí) a spustí novou instanci přes `pythonw.exe` (bez konzole;
+`src/main.py` pak loguje do `%APPDATA%\MortalManager\mortalmanager.log`). `pyproject` má `[project.gui-scripts]`, ne `scripts`. Venv stojí na **Pythonu z Microsoft Store (MSIX)** – hlavní panel
 proto ignoruje ikonu okna; `MainWindow._apply_taskbar_identity` nastavuje AppUserModel vlastnosti přímo na HWND
 (pywin32 `propsys`), bez toho je v panelu ikona Pythonu. ruff a mypy v `C:\mm_venv` nainstalované
 nejsou (`pip install -e .[dev]` je doplní); jejich konfigurace cílí na Python 3.13.
 
 ```bash
 python -m src.main                                  # spustit aplikaci
-restart.bat                                         # restart běžící instance (C:\mm_venv)
+restart.bat                                         # restart běžící instance (Python přes find_python.bat)
 start.bat                                           # další instance vedle běžících (nic nezabíjí)
-python -m pytest -q                                 # testy (79, běží ~4 s, headless Qt přes offscreen)
+python -m pytest -q                                 # testy (87, běží ~4 s, headless Qt přes offscreen)
 python -m pytest -q tests/test_theme.py             # vzhled: hex jen v theme.py, zoom, ikony, barvy tabulky
 python -m pytest -q tests/test_core.py::test_format_size_kb   # jeden test
 python -m ruff check src tests                      # lint

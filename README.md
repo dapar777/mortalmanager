@@ -10,11 +10,15 @@ git/svn stav souborů, tmavé a světlé téma, plynulý zoom celého UI. Chybí
 ## Spuštění
 
 ```bash
-pip install -e .[dev]
+py -m venv .venv                      # na novém PC: venv vedle projektu (start.bat ho najde sám)
+.venv\Scripts\pip install -r requirements.txt
 python -m src.main        # s konzolí (log do konzole)
 restart.bat              # restart: zabije běžící instance a spustí novou (pythonw.exe, log v %APPDATA%\MortalManager\mortalmanager.log)
 start.bat                # další instance vedle běžících (nic nezabíjí)
 ```
+
+`start.bat` i `restart.bat` hledají Python přes `find_python.bat`: proměnná `MM_PYTHON`, `.venv` / `venv` vedle
+projektu, `C:\mm_venv`, nakonec `pythonw.exe` v PATH; bere první, ve kterém jde importovat PySide6.
 
 ## Vzhled
 
