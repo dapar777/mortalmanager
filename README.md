@@ -20,6 +20,13 @@ start.bat                # další instance vedle běžících (nic nezabíjí)
 `start.bat` i `restart.bat` hledají Python přes `find_python.bat`: proměnná `MM_PYTHON`, `.venv` / `venv` vedle
 projektu, `C:\mm_venv`, nakonec `pythonw.exe` v PATH; bere první, ve kterém jde importovat PySide6.
 
+## Ukázka
+
+[![Ukázka hlavních funkcí – video](docs/demo-frame.png)](docs/demo.mp4)
+
+Krátké video s hlavními funkcemi: [docs/demo.mp4](docs/demo.mp4) (53 s). Generuje ho `tools/make_demo_video.py`,
+který projede skutečnou aplikaci skriptovanou prohlídkou; potřebuje `imageio` + `imageio-ffmpeg`.
+
 ## Vzhled
 
 Vzhled se řídí manuálem [solarqt](../solarqt/MANUAL.md) (Solarized, teplý „papír“, sémantické barvy, kreslené
@@ -39,6 +46,7 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Nové okno (další instance) | ikona vedle přepínače tématu, *Files → New Window*, paleta „App › New window“ |
 | Přepnutí panelu | Tab |
 | Označení souborů (jako v TC) | Insert / mezerník (přepne a posune kurzor), Shift+šipky / PgUp / PgDn / Home / End, Shift+klik = rozsah, Ctrl+klik = přepnout, Ctrl+A, Num +/−/\* |
+| Drag & drop | tažení označených souborů (nebo řádku pod myší) do druhého panelu, na složku v seznamu, na `..` i do Exploreru a jiných aplikací; zpět z Exploreru sem; bez modifikátoru kopie, Shift přesun |
 | Schránka se soubory (kompatibilní s Explorerem) | Ctrl+C / Ctrl+X označené soubory, Ctrl+V vloží do aktivního panelu; vložení do stejné složky vytvoří „název - Kopie.ext“ (přípona v nastavení `copy_suffix`) |
 | Kopírovat názvy / celé cesty do schránky | Ctrl+Shift+C / Ctrl+Alt+C (menu Mark) |
 | Historie procházení panelu | Alt+Down |

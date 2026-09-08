@@ -9,6 +9,9 @@
     %RI  like %R but the command runs once per entry
     %%   a literal percent sign
 
+A placeholder must end at a word boundary, so cmd variables (``%PROJEKT%``,
+``%PATH%``, ``%TEMP%``) pass through untouched.
+
 Names with spaces or shell metacharacters are double-quoted. Expansion is
 pure (no Qt); the terminal widget asks the main window for the context.
 """
@@ -18,8 +21,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_TOKEN = re.compile(r"%(SI|RI|[NPTSR%])")
-_REAL = re.compile(r"%(SI|RI|[NPTSR])")
+# a placeholder ends at a word boundary: %PROJEKT%, %PATH%, %TEMP%, %SystemRoot% are cmd variables, not %P / %T / %S
+_TOKEN = re.compile(r"%(SI|RI|[NPTSR])(?![A-Za-z0-9_])|%(%)")
+_REAL = re.compile(r"%(SI|RI|[NPTSR])(?![A-Za-z0-9_])")
 _NEEDS_QUOTES = re.compile(r'[\s&|<>^()"]')
 
 
@@ -64,7 +68,7 @@ def _expand_one(cmd: str, ctx: CmdContext, it_name: str | None, it_path: str | N
     q = quote if quoted else (lambda v: v)
 
     def repl(m: re.Match) -> str:
-        tok = m.group(1)
+        tok = m.group(1) or m.group(2)
         if tok == "%":
             return "%"
         if tok == "N":

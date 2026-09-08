@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         for panel in (self._left_panel, self._right_panel):
             panel.cmdline_insert.connect(self._insert_into_terminal)
             panel.clipboard_requested.connect(self._on_clipboard_request)
+            panel.files_dropped.connect(self._on_files_dropped)
         self._terminal.height_step.connect(self._terminal_height_step)
         self._terminal.setVisible(self._cfg.config.command_bar_visible)
         self._terminal_base_sizes: list[int] | None = None   # splitter sizes before Alt+± (None = untouched)
@@ -1067,21 +1068,33 @@ class MainWindow(QMainWindow):
         """Ctrl+V: copy (or move after Ctrl+X) the clipboard files into the active
         panel's folder. Pasting a file into its own folder creates
         "name - Kopie.ext" (AppConfig.copy_suffix) like Explorer / Total Commander."""
-        from src.core.naming import copy_target, same_folder
         from . import file_clipboard
         paths, cut = file_clipboard.get_files()
         paths = [p for p in paths if os.path.exists(p)]
         if not paths:
             Toast.show_message(self, "No files on the clipboard", "info")
             return
-        dest = self._active_panel_widget.current_path
+        self._transfer(paths, self._active_panel_widget.current_path, move=cut)
+        if cut:
+            file_clipboard.clear()                             # a cut pastes once
+
+    def _on_files_dropped(self, paths: list[str], dest: str, move: bool) -> None:
+        """Drag & drop from the other panel, Explorer or any app: same rules as paste."""
+        paths = [p for p in paths if os.path.exists(p)]
+        if paths:
+            self._transfer(paths, dest, move)
+
+    def _transfer(self, paths: list[str], dest: str, move: bool) -> None:
+        """Copy / move ``paths`` into ``dest`` through the job queue. A copy into
+        the file's own folder becomes "name - Kopie.ext"; a move onto itself is skipped."""
+        from src.core.naming import copy_target, same_folder
         suffix = self._cfg.config.copy_suffix or " - Kopie"
-        job_type = JobType.MOVE if cut else JobType.COPY
+        job_type = JobType.MOVE if move else JobType.COPY
         plain: list[str] = []
         first_new = ""
         for p in paths:
             if same_folder(p, dest):
-                if cut:
+                if move:
                     continue                                   # moving onto itself: nothing to do
                 target = copy_target(p, dest, suffix)
                 self._submit(JobSpec(job_type=JobType.COPY, sources=[p], destination=target),
@@ -1091,11 +1104,11 @@ class MainWindow(QMainWindow):
                 plain.append(p)
         if plain:
             self._submit(JobSpec(job_type=job_type, sources=plain, destination=dest),
-                         f"{'Moving' if cut else 'Copying'} {len(plain)} item(s)…")
+                         f"{'Moving' if move else 'Copying'} {len(plain)} item(s)…")
         if first_new:
-            self._active_panel_widget.set_pending_cursor(first_new)
-        if cut:
-            file_clipboard.clear()                             # a cut pastes once
+            for panel in (self._left_panel, self._right_panel):
+                if os.path.normcase(panel.current_path) == os.path.normcase(dest):
+                    panel.set_pending_cursor(first_new)
 
     def _move_files(self) -> None:
         self._copy_or_move(JobType.MOVE)

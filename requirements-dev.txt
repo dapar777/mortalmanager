@@ -4,3 +4,5 @@ pytest-qt>=4.4.0
 pytest-cov>=5.0.0
 mypy>=1.10.0
 ruff>=0.4.0
+imageio>=2.34.0          # tools/make_demo_video.py
+imageio-ffmpeg>=0.5.0

@@ -12,18 +12,21 @@ Performance notes:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from PySide6.QtCore import (
     QAbstractTableModel,
     QFileInfo,
+    QMimeData,
     QModelIndex,
     QSize,
     Qt,
     QTimer,
+    QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDrag, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileIconProvider,
@@ -273,8 +276,12 @@ class FileTableModel(QAbstractTableModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         base = super().flags(index)
         entry = self.get_entry(index.row()) if index.isValid() else None
-        if entry is not None and index.column() == _COL_NAME and not entry.is_parent:
-            return base | Qt.ItemFlag.ItemIsEditable
+        if entry is None or entry.is_parent:
+            return base
+        # ItemIsDragEnabled is what lets QAbstractItemView start a drag at all (see FileTableView.startDrag)
+        base |= Qt.ItemFlag.ItemIsDragEnabled
+        if index.column() == _COL_NAME:
+            base |= Qt.ItemFlag.ItemIsEditable
         return base
 
     def setData(self, index: QModelIndex, value, role: int = Qt.ItemDataRole.EditRole) -> bool:  # noqa: N802
@@ -405,6 +412,8 @@ class FileTableView(QTableView):
     toggle_rows = Signal(list)         # [FileEntry] – toggle each (Shift+cursor keys, Ctrl+click)
     cmdline_insert = Signal(str)       # Ctrl+Enter = name, Ctrl+Shift+Enter = full path → terminal line
     clipboard_requested = Signal(str)  # "copy" | "cut" | "paste" (Ctrl+C / Ctrl+X / Ctrl+V)
+    files_dropped = Signal(list, str, bool)   # paths, destination folder, move? – a drop landed here
+    external_move_done = Signal()      # a drag out of this table ended as a move (Explorer moved the files)
     mark_rows = Signal(list)           # [FileEntry] – select each (Shift+click range)
     sort_requested = Signal(object)    # SortField (header click)
     filter_requested = Signal(str)     # '*' typed: open the quick filter (with initial text)
@@ -414,6 +423,7 @@ class FileTableView(QTableView):
         self.setObjectName("fileTable")
         self.setModel(FileTableModel(self))
         self._type_ahead = ""
+        self.drop_root = ""                    # folder shown in this table (drop target when not over a folder row)
         self._type_ahead_timer = QTimer(self)
         self._type_ahead_timer.setInterval(900)
         self._type_ahead_timer.setSingleShot(True)
@@ -431,6 +441,13 @@ class FileTableView(QTableView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFrameShape(QTableView.Shape.NoFrame)
         self.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)   # only F2 / menu, never a slow click
+        # drag & drop: marked entries (or the row under the mouse) go out as file URLs, which Explorer
+        # and other apps understand; drops with file URLs come in from the other panel or any app
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.setDragDropMode(QTableView.DragDropMode.DragDrop)
+        self.setDropIndicatorShown(False)
         self.setItemDelegateForColumn(_COL_NAME, _NameDelegate(self))
         vh = self.verticalHeader()
         vh.setVisible(False)
@@ -508,6 +525,76 @@ class FileTableView(QTableView):
 
     def _reset_type_ahead(self) -> None:
         self._type_ahead = ""
+
+    # ------------------------------------------------------------------ drag & drop
+
+    def drag_paths(self) -> list[str]:
+        """What a drag carries: the marked entries, else the entry under the cursor."""
+        model = self.file_model()
+        marked = model.selected_paths
+        if marked:
+            return [e.full_path for e in model.get_all_entries() if e.full_path in marked]
+        cur = self.current_entry()
+        return [cur.full_path] if cur is not None and not cur.is_parent else []
+
+    def startDrag(self, supported_actions) -> None:  # noqa: N802
+        paths = self.drag_paths()
+        if not paths:
+            return
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        idx = self.currentIndex()
+        icon = self.model().data(self.model().index(idx.row(), _COL_NAME), Qt.ItemDataRole.DecorationRole)
+        if isinstance(icon, QIcon):
+            drag.setPixmap(icon.pixmap(icons.qsize(theme.ICON_SIZE * 2)))
+        # Total Commander: a plain drag copies, Shift moves (Explorer as a target decides the same way)
+        result = drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction, Qt.DropAction.CopyAction)
+        if result == Qt.DropAction.MoveAction:
+            self.external_move_done.emit()
+
+    @staticmethod
+    def _dropped_paths(event) -> list[str]:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        return [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
+
+    def _drop_target(self, pos) -> str:
+        """Folder row under the mouse (".." = parent folder), else the shown folder."""
+        idx = self.indexAt(pos)
+        entry = self.file_model().get_entry(idx.row()) if idx.isValid() else None
+        if entry is not None and entry.is_dir:
+            return entry.full_path
+        return self.drop_root
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if self._dropped_paths(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if self._dropped_paths(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        paths = self._dropped_paths(event)
+        dest = self._drop_target(event.position().toPoint())
+        if not paths or not dest:
+            event.ignore()
+            return
+        move = event.proposedAction() == Qt.DropAction.MoveAction
+        # a folder cannot be dropped into itself / its own subtree
+        paths = [p for p in paths if not (os.path.normcase(dest + os.sep).startswith(os.path.normcase(p.rstrip("\\/") + os.sep)))]
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.files_dropped.emit(paths, dest, move)
 
     # ------------------------------------------------------------------ TC-style marking
 

@@ -232,6 +232,7 @@ class PanelWidget(QFrame):
     entry_activated = Signal(object)     # FileEntry – file (directories are handled here)
     cmdline_insert = Signal(str)         # Ctrl+Enter / Ctrl+Shift+Enter on an entry → terminal command line
     clipboard_requested = Signal(str)    # "copy" | "cut" | "paste" from the table
+    files_dropped = Signal(list, str, bool)   # drag & drop landed in this panel: paths, dest folder, move?
     status_info = Signal(str)            # status bar text
     request_focus = Signal()             # panel wants keyboard focus
     favorites_requested = Signal()       # star button
@@ -337,6 +338,8 @@ class PanelWidget(QFrame):
         self._table.entry_activated.connect(self._on_entry_activated)
         self._table.cmdline_insert.connect(self.cmdline_insert)
         self._table.clipboard_requested.connect(self.clipboard_requested)
+        self._table.files_dropped.connect(self.files_dropped)
+        self._table.external_move_done.connect(self.refresh)   # Explorer moved our files away
         self._table.space_pressed.connect(self._toggle_selection)
         self._table.toggle_rows.connect(self._toggle_entries)
         self._table.mark_rows.connect(self._mark_entries)
@@ -467,6 +470,7 @@ class PanelWidget(QFrame):
         self._path_edit.setText(resolved)
         self._path_edit.setCursorPosition(0)   # narrow field: show the drive, not the tail
         self._crumb.set_path(resolved)
+        self._table.drop_root = resolved
         self._path_edit.setProperty("invalid", "false")
         widgets.repolish(self._path_edit)
         label = Path(resolved).name or resolved

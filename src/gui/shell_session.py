@@ -9,7 +9,7 @@ as it arrives. Killing the process (toolbar button, Ctrl+C on a stuck
 command) and starting a clean one is the widget's job.
 
 Per shell:
-* CMD – ``cmd /Q`` with ``PROMPT=__UCP__`` (stripped from the output together
+* CMD – ``cmd /Q /K rem`` (no version banner) with ``PROMPT=__UCP__`` (stripped from the output together
   with the blank line cmd prints before it); both pipes use the OEM code page –
   that is how cmd reads a pipe, and ``chcp 65001`` only breaks the input side.
 * PowerShell – ``powershell -Command -`` only runs after EOF, so a tiny driver
@@ -57,7 +57,7 @@ class ShellSession(QObject):
         else:
             self.shell = "CMD"
             env["PROMPT"] = CMD_PROMPT
-            args = ["cmd.exe", "/Q"]
+            args = ["cmd.exe", "/Q", "/K", "rem"]      # /K <cmd> also suppresses the version banner
             self._enc = "oem"
         self._proc = subprocess.Popen(
             args, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

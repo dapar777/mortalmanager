@@ -36,7 +36,9 @@ python -m mypy src                                  # typy, strict
 pip install -e .[dev]                               # vývojová instalace
 ```
 
-Testy pokrývají `core`, `filesystem`, `archive`, `database` a vzhled (`test_theme.py`; `tests/conftest.py`
+`tools/make_demo_video.py` nahraje ukázkové video `docs/demo.mp4`: řídí skutečnou aplikaci (skryté okno, `grab()` vrací
+device pixely – při 120 % škálování se přepočítávají na logické; paleta se skládá jako overlay; config se neukládá),
+potřebuje `imageio` + `imageio-ffmpeg`. Testy pokrývají `core`, `filesystem`, `archive`, `database` a vzhled (`test_theme.py`; `tests/conftest.py`
 dává session fixture `qapp` s `QT_QPA_PLATFORM=offscreen`). GUI testy hlavního okna neexistují – `MainWindow`
 čte reálný config v `%APPDATA%`. `qt_api` v pytest konfiguraci hlásí varování (`pytest-qt` není nainstalován).
 Kořenové `temp_shell*_debug*.py` jsou jednorázové průzkumné skripty z ladění nativní Windows shell context menu;
@@ -167,6 +169,11 @@ z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek
   Destruktivní tlačítko = `DangerButton` / property `danger`, nikdy `:default`.
 - Nový widget s pevnou šířkou v hlavičce/panelu ověř v úzkém okně (`MIN_WINDOW_WIDTH` 350 px): dlouhé popisky
   mají `QSizePolicy.Ignored` vodorovně.
+
+Drag & drop: `FileTableView.startDrag` táhne označené položky jako URL souborů (Explorer je bere), `dropEvent` přijme URL
+z druhého panelu i z cizích aplikací → signál `files_dropped(paths, dest, move)` → panel → `MainWindow._transfer`
+(společné s Ctrl+V: stejná složka = „ - Kopie“, přesun na sebe se přeskočí); cíl = složka pod myší (i `..`) nebo
+`drop_root` tabulky; Shift = přesun; přesun provedený Explorerem obnoví zdrojový panel (`external_move_done`).
 
 Schránka se soubory: `FileTableView` Ctrl+C/X/V → signál `clipboard_requested` → panel → `MainWindow._clip_copy` /
 `_clip_paste`; `gui/file_clipboard.py` dává na systémovou schránku URL souborů + Explorerový „Preferred DropEffect“

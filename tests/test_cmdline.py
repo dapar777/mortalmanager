@@ -53,3 +53,10 @@ def test_repl_mode_raw_and_strict():
     assert has_placeholders("'%d%%' % x", strict=True) is False
     assert has_placeholders("'%d%%' % x") is True
     assert has_placeholders("print('%N')", strict=True) is True
+
+
+def test_cmd_variables_are_not_placeholders():
+    assert not has_placeholders("echo %PROJEKT% %PATH% %TEMP% %SystemRoot%")
+    assert expand("echo %PROJEKT% %P", CTX) == ["echo %PROJEKT% C:\\proj"]
+    assert expand("set X=%N%", CTX) == ["set X=a.txt%"]      # %N then a literal % (boundary)
+    assert has_placeholders("copy %S %T")
