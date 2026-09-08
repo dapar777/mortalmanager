@@ -414,6 +414,7 @@ class FileTableView(QTableView):
     clipboard_requested = Signal(str)  # "copy" | "cut" | "paste" (Ctrl+C / Ctrl+X / Ctrl+V)
     files_dropped = Signal(list, str, bool)   # paths, destination folder, move? – a drop landed here
     external_move_done = Signal()      # a drag out of this table ended as a move (Explorer moved the files)
+    keyboard_drag_requested = Signal() # Ctrl+. – drag the marked files without the mouse (see gui/keyboard_drag.py)
     mark_rows = Signal(list)           # [FileEntry] – select each (Shift+click range)
     sort_requested = Signal(object)    # SortField (header click)
     filter_requested = Signal(str)     # '*' typed: open the quick filter (with initial text)
@@ -537,10 +538,11 @@ class FileTableView(QTableView):
         cur = self.current_entry()
         return [cur.full_path] if cur is not None and not cur.is_parent else []
 
-    def startDrag(self, supported_actions) -> None:  # noqa: N802
+    def make_drag(self) -> QDrag | None:
+        """QDrag carrying drag_paths() as file URLs (shared by mouse and keyboard drags)."""
         paths = self.drag_paths()
         if not paths:
-            return
+            return None
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
         drag = QDrag(self)
@@ -549,6 +551,12 @@ class FileTableView(QTableView):
         icon = self.model().data(self.model().index(idx.row(), _COL_NAME), Qt.ItemDataRole.DecorationRole)
         if isinstance(icon, QIcon):
             drag.setPixmap(icon.pixmap(icons.qsize(theme.ICON_SIZE * 2)))
+        return drag
+
+    def startDrag(self, supported_actions) -> None:  # noqa: N802
+        drag = self.make_drag()
+        if drag is None:
+            return
         # Total Commander: a plain drag copies, Shift moves (Explorer as a target decides the same way)
         result = drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction, Qt.DropAction.CopyAction)
         if result == Qt.DropAction.MoveAction:
@@ -733,6 +741,9 @@ class FileTableView(QTableView):
             action = {Qt.Key.Key_C: "copy", Qt.Key.Key_X: "cut", Qt.Key.Key_V: "paste"}.get(key)
             if action:
                 self.clipboard_requested.emit(action)
+                return
+            if key == Qt.Key.Key_Period:
+                self.keyboard_drag_requested.emit()
                 return
 
         text = event.text()

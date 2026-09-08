@@ -233,6 +233,7 @@ class PanelWidget(QFrame):
     cmdline_insert = Signal(str)         # Ctrl+Enter / Ctrl+Shift+Enter on an entry → terminal command line
     clipboard_requested = Signal(str)    # "copy" | "cut" | "paste" from the table
     files_dropped = Signal(list, str, bool)   # drag & drop landed in this panel: paths, dest folder, move?
+    keyboard_drag_requested = Signal()   # Ctrl+. in the table
     status_info = Signal(str)            # status bar text
     request_focus = Signal()             # panel wants keyboard focus
     favorites_requested = Signal()       # star button
@@ -339,6 +340,7 @@ class PanelWidget(QFrame):
         self._table.cmdline_insert.connect(self.cmdline_insert)
         self._table.clipboard_requested.connect(self.clipboard_requested)
         self._table.files_dropped.connect(self.files_dropped)
+        self._table.keyboard_drag_requested.connect(self.keyboard_drag_requested)
         self._table.external_move_done.connect(self.refresh)   # Explorer moved our files away
         self._table.space_pressed.connect(self._toggle_selection)
         self._table.toggle_rows.connect(self._toggle_entries)

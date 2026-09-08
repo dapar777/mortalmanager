@@ -46,6 +46,7 @@ ikony, dvě témata). Balíček je vendorovaný v `src/solarqt/` a rozšířený
 | Nové okno (další instance) | ikona vedle přepínače tématu, *Files → New Window*, paleta „App › New window“ |
 | Přepnutí panelu | Tab |
 | Označení souborů (jako v TC) | Insert / mezerník (přepne a posune kurzor), Shift+šipky / PgUp / PgDn / Home / End, Shift+klik = rozsah, Ctrl+klik = přepnout, Ctrl+A, Num +/−/\* |
+| Drag & drop z klávesnice | Ctrl+. začne táhnout označené soubory bez myši (velký vlastní kurzor s počtem souborů, kurzor zůstane, kde je); Alt+Tab přepne na cílové okno a teprve pak kurzor skočí do jeho středu, šipky ho posunou o desetinu obrazovky, Enter pustí, Esc zruší bez puštění; klávesy se cílové aplikaci nepředají |
 | Drag & drop | tažení označených souborů (nebo řádku pod myší) do druhého panelu, na složku v seznamu, na `..` i do Exploreru a jiných aplikací; zpět z Exploreru sem; bez modifikátoru kopie, Shift přesun |
 | Schránka se soubory (kompatibilní s Explorerem) | Ctrl+C / Ctrl+X označené soubory, Ctrl+V vloží do aktivního panelu; vložení do stejné složky vytvoří „název - Kopie.ext“ (přípona v nastavení `copy_suffix`) |
 | Kopírovat názvy / celé cesty do schránky | Ctrl+Shift+C / Ctrl+Alt+C (menu Mark) |

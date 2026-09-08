@@ -176,6 +176,20 @@ z druhého panelu i z cizích aplikací → signál `files_dropped(paths, dest, 
 (společné s Ctrl+V: stejná složka = „ - Kopie“, přesun na sebe se přeskočí); cíl = složka pod myší (i `..`) nebo
 `drop_root` tabulky; Shift = přesun; přesun provedený Explorerem obnoví zdrojový panel (`external_move_done`).
 
+Drag z klávesnice (Ctrl+.): `gui/keyboard_drag.py` jde **mimo Qt** přes pywin32 `pythoncom.DoDragDrop` s vlastním
+`IDropSource` (Qt zdroj ukončí drag bez stisknutého tlačítka). Pasti, které stály hodiny: (1) Windows při Alt+Tab
+pustí mouse capture a OLE drag zruší, pokud není fyzicky stisknuté tlačítko – proto se levé tlačítko drží přes
+`SendInput` po celou dobu (stisk i uvolnění nad naším stavovým řádkem, `client_bottom_center`, nikdy nad rámem okna =
+resize smyčka); (2) Qt musí ten stisk zpracovat **před** `DoDragDrop`, jinak jeho SetCapture uvnitř smyčky sebere
+capture OLE = cancel; (3) smyčka OLE se budí jen vstupem – hlídací vlákno každých 80 ms vkládá nulový pohyb myši
+(`PostThreadMessage` OLE bere jako ztrátu capture = cancel); (4) Qt časovače uvnitř smyčky OLE neběží, proto vlákno.
+Vlákno drží i low-level keyboard hook (Enter = drop, Esc = cancel, šipky = kurzor o 1/10 monitoru, klávesy se
+spolknou, aby je nedostala aplikace vpředu; ctypes musí mít `restype` HMODULE/HHOOK, jinak se 64bit handle usekne a
+`SetWindowsHookExW` tiše selže) a při změně foreground okna posune kurzor do jeho středu. Po dobu dragu jsou systémové
+kurzory nahrazeny velkým vlastním (`SetSystemCursor`, obnova `SPI_SETCURSORS`). Data = shellový IDataObject
+(`SHCreateShellItemArrayFromIDLists` → `BHID_DataObject`); `DoDragDrop` v pywin32 vrací jen DROPEFFECT. Souřadnice pro
+`SendInput` jsou fyzické pixely. Ověřuje se skriptem s pomocným procesem jako cílem a vláknem, které vkládá vstup.
+
 Schránka se soubory: `FileTableView` Ctrl+C/X/V → signál `clipboard_requested` → panel → `MainWindow._clip_copy` /
 `_clip_paste`; `gui/file_clipboard.py` dává na systémovou schránku URL souborů + Explorerový „Preferred DropEffect“
 (copy/move), takže funguje i mezi UC a Explorerem; vložení do téže složky pojmenuje `core/naming.copy_target`

@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
             panel.cmdline_insert.connect(self._insert_into_terminal)
             panel.clipboard_requested.connect(self._on_clipboard_request)
             panel.files_dropped.connect(self._on_files_dropped)
+            panel.keyboard_drag_requested.connect(self._keyboard_drag)
         self._terminal.height_step.connect(self._terminal_height_step)
         self._terminal.setVisible(self._cfg.config.command_bar_visible)
         self._terminal_base_sizes: list[int] | None = None   # splitter sizes before Alt+± (None = untouched)
@@ -851,6 +852,7 @@ class MainWindow(QMainWindow):
             e("Files", "Copy to clipboard", lambda: self._clip_copy(False), "Ctrl+C", icon="clipboard"),
             e("Files", "Cut to clipboard", lambda: self._clip_copy(True), "Ctrl+X", icon="clipboard"),
             e("Files", "Paste from clipboard", self._clip_paste, "Ctrl+V", icon="clipboard"),
+            e("Files", "Keyboard drag (Alt+Tab to target, Enter drops)", self._keyboard_drag, "Ctrl+.", icon="copy"),
             e("Files", "Edit in built-in editor", self._edit_builtin, icon="edit"),
             e("Files", "Properties", self._show_properties, "Alt+Enter", icon="info"),
             e("Files", "Compute hash…", self._compute_hash, icon="hash"),
@@ -1077,6 +1079,26 @@ class MainWindow(QMainWindow):
         self._transfer(paths, self._active_panel_widget.current_path, move=cut)
         if cut:
             file_clipboard.clear()                             # a cut pastes once
+
+    def _keyboard_drag(self) -> None:
+        """Ctrl+.: drag the marked files without the mouse. Alt+Tab to the target
+        window (the cursor jumps to its centre), Enter drops, Esc cancels."""
+        from .keyboard_drag import run_keyboard_drag
+        panel = self._active_panel_widget
+        paths = panel._table.drag_paths()
+        if not paths:
+            Toast.show_message(self, "Nothing to drag – mark files or put the cursor on one", "info")
+            return
+        Toast.show_message(self, f"Dragging {len(paths)} item(s): Alt+Tab to the target, arrows move the cursor, "
+                                 "Enter drops, Esc cancels", "info", 6000)
+        QApplication.processEvents()
+        try:
+            result = run_keyboard_drag(paths, int(self.winId()))
+        except Exception as exc:
+            Toast.show_message(self, f"Keyboard drag failed: {exc}", "error")
+            return
+        if result == "move":
+            panel.refresh()
 
     def _on_files_dropped(self, paths: list[str], dest: str, move: bool) -> None:
         """Drag & drop from the other panel, Explorer or any app: same rules as paste."""
