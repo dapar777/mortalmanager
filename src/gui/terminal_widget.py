@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -81,6 +82,11 @@ class _CmdRunner(QRunnable):
             self.signals.finished.emit("", str(exc), -1, self._token)
 
 
+_IDLE_PLACEHOLDER = ("command…   ↑↓ history   Tab complete   Ctrl+Enter file name   %N %P %T %S %R %SI %RI   "
+                     "Alt+± pane height   Ctrl+Up back to panel")
+_BUSY_PLACEHOLDER = "running…   Ctrl+C = kill (new shell session)   Ctrl+Up back to panel"
+_SLOW_COMMAND_S = 2.0        # commands longer than this get a "[done · 12.3 s]" line even when silent
+
 # ------------------------------------------------------------------ widget
 
 
@@ -112,6 +118,7 @@ class EmbeddedTerminalWidget(QFrame):
         self._queue: list[str] = []                # remaining commands of a %SI / %RI run
         self._echo_expanded = False
         self._token: object | None = None          # identifies the command whose result is awaited
+        self._cmd_started = 0.0                    # monotonic time the running shell command was sent
         self._at_line_start = True
         self._pool = QThreadPool.globalInstance()
         self._build_ui()
@@ -170,6 +177,7 @@ class EmbeddedTerminalWidget(QFrame):
         fresh one on the next command."""
         self._queue.clear()
         self._drop_shell()
+        self._input.setPlaceholderText(_IDLE_PLACEHOLDER)
         self._write(f"  [new {self.current_shell()} session]", "muted")
         self._ensure_shell()
 
@@ -270,8 +278,7 @@ class EmbeddedTerminalWidget(QFrame):
         self._input = QLineEdit()
         self._input.setObjectName("terminalInput")
         self._input.setPlaceholderText(
-            "command…   ↑↓ history   Tab complete   Ctrl+Enter file name   %N %P %T %S %R %SI %RI   "
-            "Alt+± pane height   Ctrl+Up back to panel")
+            _IDLE_PLACEHOLDER)
         self._input.returnPressed.connect(self._on_return)
         self._input.installEventFilter(self)
 
@@ -408,6 +415,8 @@ class EmbeddedTerminalWidget(QFrame):
             if sh.busy():
                 self._write("  [previous command still running – Ctrl+C or the restart button kills it]", "warning")
                 return
+            self._cmd_started = time.monotonic()
+            self._input.setPlaceholderText(_BUSY_PLACEHOLDER)
             sh.run(cmd, self._cwd, self._token)
             return
         runner = _CmdRunner(cmd, shell, self._find_git_bash(), self._cwd, self._token)
@@ -418,8 +427,14 @@ class EmbeddedTerminalWidget(QFrame):
     def _on_shell_finished(self, rc: int, cwd: str, token: object) -> None:
         if not self._at_line_start:
             self._write_raw("\n")
+        if self._session is None:
+            self._input.setPlaceholderText(_IDLE_PLACEHOLDER)
+        took = time.monotonic() - self._cmd_started if self._cmd_started else 0.0
         if rc != 0:
-            self._write(f"  [exit {rc}]", "warning")
+            self._write(f"  [exit {rc}" + (f" · {took:.1f} s]" if took >= _SLOW_COMMAND_S else "]"), "warning")
+        elif took >= _SLOW_COMMAND_S:
+            # git clone & co. print nothing on success when stderr is a pipe – say that it finished
+            self._write(f"  [done · {took:.1f} s]", "muted")
         if cwd and os.path.normcase(cwd) != os.path.normcase(self._cwd) and os.path.isdir(cwd):
             self._cwd = cwd                   # cd / pushd typed into the shell: follow it
             self._update_prompt()
@@ -433,6 +448,7 @@ class EmbeddedTerminalWidget(QFrame):
             return
         self._shell = None
         self._queue.clear()
+        self._input.setPlaceholderText(_IDLE_PLACEHOLDER)
         self._write(f"  [{self.current_shell()} exited {rc} – a new session starts with the next command]", "warning")
 
     # ------------------------------------------------------------------ interactive session
@@ -467,8 +483,7 @@ class EmbeddedTerminalWidget(QFrame):
         self._write(f"  [{name} exited {rc}]", "muted" if rc == 0 else "warning")
         self._shell_combo.setEnabled(True)
         self._input.setPlaceholderText(
-            "command…   ↑↓ history   Tab complete   Ctrl+Enter file name   %N %P %T %S %R %SI %RI   "
-            "Alt+± pane height   Ctrl+Up back to panel")
+            _IDLE_PLACEHOLDER)
         self._update_prompt()
 
     def _handle_cd(self, target: str) -> None:

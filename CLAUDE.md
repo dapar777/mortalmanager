@@ -90,7 +90,8 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `EmbeddedTerminalWidget` (`shell_session.py` `ShellSession` = **trvalý** cmd/powershell/bash proces s rourami: každý
   příkaz následuje sentinel `__UC_DONE__ rc cwd`, výstup streamuje, cmd má obě roury v OEM kódování (`chcp 65001` rozbije
   vstup) a prompt `__UCP__`, který se odstraňuje; PowerShell přes smyčku `Invoke-Expression` po řádcích,
-  `-Command -` by čekalo na EOF; `restart_shell()` = tlačítko ↻ / Ctrl+C na běžícím příkazu; `_CmdRunner` zůstal jen
+  `-Command -` by čekalo na EOF; `restart_shell()` = tlačítko ↻ / Ctrl+C na běžícím příkazu; během běhu má řádka placeholder „running…“, příkaz
+  delší než 2 s dostane `[done · 12.3 s]` (git clone při rouře na výstupu mlčí); `_CmdRunner` zůstal jen
   jako záloha, když se shell nespustí; zástupné znaky
   `%N %P %T %S %R %SI %RI` rozbaluje čistý `core/cmdline.py` (`expand` → seznam příkazů, `%SI`/`%RI` = jeden
   na označenou položku, terminál je pouští za sebou přes `_queue`) z `CmdContext`, který dodává
