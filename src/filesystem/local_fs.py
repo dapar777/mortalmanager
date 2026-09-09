@@ -114,6 +114,8 @@ def _entry_from_direntry(de: os.DirEntry) -> FileEntry:
         except OSError:
             target = None
     name = de.name
+    # os.path.splitext on the bare name, not Path.suffix: the latter parses the
+    # whole path (pathlib is lazy until then) and was 40 % of a 5 000-entry listing
     return FileEntry(
         name=name,
         path=path,
@@ -123,7 +125,7 @@ def _entry_from_direntry(de: os.DirEntry) -> FileEntry:
         is_dir=is_dir,
         is_symlink=is_symlink,
         attributes=attrs,
-        extension="" if is_dir else path.suffix.lstrip("."),
+        extension="" if is_dir else os.path.splitext(name)[1].lstrip("."),
         target=target,
     )
 
@@ -144,15 +146,17 @@ class LocalFileSystemProvider(FileSystemProvider):
     async def list_directory(
         self, path: str, show_hidden: bool = False
     ) -> list[FileEntry]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.list_directory_sync, path, show_hidden)
+
+    def list_directory_sync(self, path: str, show_hidden: bool = False) -> list[FileEntry]:
+        """Blocking variant for callers with their own worker thread (the panels
+        use the Qt thread pool: a signal reaches the GUI at once, whereas an
+        asyncio future waits for the next pump tick per hop)."""
         directory = Path(path)
         if not directory.is_dir():
             raise FileNotFoundError(f"Not a directory: {path}")
-
-        loop = asyncio.get_event_loop()
-        entries = await loop.run_in_executor(
-            None, self._list_sync, directory, show_hidden
-        )
-        return entries
+        return self._list_sync(directory, show_hidden)
 
     def _list_sync(self, directory: Path, show_hidden: bool) -> list[FileEntry]:
         """One ``os.scandir`` pass: on Windows the directory enumeration already

@@ -61,7 +61,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `DriveBar`, na to jen deleguje –, hledání, výpočet velikosti),
   `DirectoryWatcher` emituje `directory_changed(str)`. FTP/SFTP (`ftp/`) jsou samostatní klienti, ne provider.
 - **`jobs/`** — `JobQueue` (QObject) běží nad **asyncio smyčkou**, kterou `src/main.py` pumpuje z Qt `QTimer`
-  každých 20 ms. Dlouhé operace se odesílají jako `JobSpec(job_type: JobType, sources, destination, options)`
+  každých 10 ms; pumpa **vyprazdňuje frontu ready callbacků** (až 8 průchodů `run_forever` za tik), protože jeden
+  průchod provede jen callbacky připravené na jeho začátku a každý `await` executoru by jinak stál 2 tiky
+  (100 souborů po jednom `await` = 4 s místo 0,3 s). Dlouhé operace se odesílají jako `JobSpec(job_type: JobType, sources, destination, options)`
   přes `MainWindow._submit` (eviduje spec podle job_id); fronta hlásí `job_started / job_progress(job_id,
   OperationProgress) / job_finished(job_id, JobResult) / job_failed`, `MainWindow` po dokončení obnoví oba panely
   a ukáže `Toast`. `JobResult.undo_pairs` krmí `UndoManager`. Cokoli blokujícího musí jít touto cestou.
@@ -109,9 +111,12 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `PanelWidget` = `QFrame#panel` s property `active` (aktivní = akcentový rámeček): hlavička (zpět/vpřed/nahoru,
   `#pathEdit`, refresh, oblíbené) + řádek `QTabBar` (jen šířka tabů) + `gui/breadcrumb.py` `Breadcrumb` (klikací
   segmenty cesty, signál `path_clicked` → `navigate_to`, úvodní segmenty se při nedostatku místa složí do „…“ s menu,
-  QSS `#breadcrumb`) + `FileTableView` + patička. Adresář načítá asynchronně s **generací**
-  (pomalý výpis nikdy nepřepíše novější), VCS root/status detekuje `_VcsInfo` v executoru s cache na kořen
-  repa (nikdy subprocess z GUI vlákna). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `.lnk` na složku = `navigate_to` cíle (`filesystem/shortcut.py`, IShellLink), `_EXEC_EXTENSIONS` se spustí
+  QSS `#breadcrumb`) + `FileTableView` + patička. Adresář načítá `_LoadWorker` v **`QThreadPool`** (ne přes
+  asyncio – Qt signál dorazí do GUI hned, `await` čeká na tik pumpy) s **generací** (pomalý výpis nikdy
+  nepřepíše novější) ve dvou fázích: `listed` ukáže výpis hned, `annotated` po VCS stavu jen překreslí ikony
+  (`FileTableModel.vcs_updated`), takže studený `git status` (~100 ms) výpis nezdrží; VCS root/status detekuje
+  `_VcsInfo` s cache na kořen repa (nikdy subprocess z GUI vlákna). Zápis do DB historie cest jde přes
+  `_CallWorker` mimo GUI vlákno a jen při uživatelské navigaci (refresh ne). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `.lnk` na složku = `navigate_to` cíle (`filesystem/shortcut.py`, IShellLink), `_EXEC_EXTENSIONS` se spustí
   přes `_run_file` – bat/cmd v novém okně `cmd /K`, ps1 přes `powershell -NoExit -File` –, text/obrázky do prohlížeče, zbytek `os.startfile`),
   `status_info`, `request_focus`, `favorites_requested`. `FileTableModel` bere barvy z `_Look` (cache per téma),
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.

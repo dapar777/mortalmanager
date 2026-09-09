@@ -23,6 +23,8 @@ class DirectoryWatcher(QObject):
 
     def watch(self, path: str) -> None:
         """Start watching *path*, stop watching previous path."""
+        if path and path == self._current:
+            return                      # refresh of the same directory: keep the handle
         if self._current:
             self._watcher.removePath(self._current)
         if path and Path(path).is_dir():

@@ -103,14 +103,20 @@ def main() -> int:
     window = MainWindow(loop)
     window.show()
 
-    # Pump asyncio loop inside Qt event loop
+    # Pump asyncio loop inside Qt event loop. One run_forever() with stop queued
+    # executes only the callbacks that were ready when it started; a task step
+    # scheduled by them (executor result -> future -> task wakeup) would wait for
+    # the next tick, i.e. two ticks per await. Drain the ready queue instead.
     def _pump_asyncio() -> None:
-        loop.call_soon(loop.stop)
-        loop.run_forever()
+        for _ in range(8):
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            if not getattr(loop, "_ready", None):
+                break
 
     timer = QTimer()
     timer.timeout.connect(_pump_asyncio)
-    timer.start(20)  # 20ms = ~50 Hz
+    timer.start(10)  # jobs await the executor once per file; the tick bounds that latency
 
     exit_code = app.exec()
     timer.stop()

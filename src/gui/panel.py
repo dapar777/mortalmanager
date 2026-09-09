@@ -6,23 +6,26 @@ Each panel is a rounded card (QFrame#panel, property ``active``) containing:
 - FileTableView
 - footer with counts and selection summary
 
-Loading is asynchronous on the shared asyncio loop; every navigation gets a
-generation number so a slow listing can never overwrite a newer one. VCS
-detection (git / svn root + status) runs in the executor and is cached per
-repository root, so changing directories inside a repo costs one ``git
-status`` at most, never a blocking subprocess on the GUI thread.
+Loading runs in the Qt thread pool (``_LoadWorker``), not on the asyncio loop:
+a Qt signal reaches the GUI thread immediately, whereas every ``await`` on the
+asyncio loop waits for the next pump tick. Every navigation gets a generation
+number so a slow listing can never overwrite a newer one. The listing is shown
+as soon as it is read; VCS detection (git / svn root + status) follows in the
+same worker and only repaints the icons, so a cold ``git status`` (~100 ms)
+never delays the directory. It is cached per repository root, and never runs
+as a blocking subprocess on the GUI thread.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -225,6 +228,72 @@ class _VcsInfo:
             self._root_cache.clear()
 
 
+class _LoadSignals(QObject):
+    listed = Signal(int, list)      # generation, entries – directory read, show it
+    annotated = Signal(int)         # generation – VCS state filled in on the same entries
+    failed = Signal(int, str)       # generation, error message
+
+
+class _LoadWorker(QRunnable):
+    """Reads one directory in the thread pool. Two-phase delivery: ``listed``
+    right after the scandir pass, ``annotated`` after the (possibly slow)
+    VCS status, which mutates the same FileEntry objects in place."""
+
+    def __init__(
+        self, signals: _LoadSignals, fs: LocalFileSystemProvider, vcs: _VcsInfo,
+        path: str, show_hidden: bool, gen: int, is_current: Callable[[int], bool],
+    ) -> None:
+        super().__init__()
+        self.setAutoDelete(True)
+        self._signals = signals
+        self._fs = fs
+        self._vcs = vcs
+        self._path = path
+        self._show_hidden = show_hidden
+        self._gen = gen
+        self._is_current = is_current
+
+    def run(self) -> None:
+        try:
+            self._run()
+        except RuntimeError:
+            # the panel (and with it the signals object) was destroyed while a
+            # slow listing / git status was still running – nothing to deliver
+            pass
+
+    def _run(self) -> None:
+        try:
+            entries = self._fs.list_directory_sync(self._path, show_hidden=self._show_hidden)
+        except Exception as exc:
+            self._signals.failed.emit(self._gen, str(exc))
+            return
+        if not self._is_current(self._gen):
+            return
+        self._signals.listed.emit(self._gen, entries)
+        try:
+            self._vcs.annotate(self._path, entries)
+        except Exception as exc:
+            logger.debug("VCS annotate failed for %s: %s", self._path, exc)
+            return
+        if self._is_current(self._gen):
+            self._signals.annotated.emit(self._gen)
+
+
+class _CallWorker(QRunnable):
+    """Run a plain callable in the thread pool (DB writes off the GUI thread)."""
+
+    def __init__(self, fn: Callable[[], None]) -> None:
+        super().__init__()
+        self.setAutoDelete(True)
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            self._fn()
+        except Exception as exc:
+            logger.debug("Background task failed: %s", exc)
+
+
 class PanelWidget(QFrame):
     """One side of the dual-pane manager."""
 
@@ -255,6 +324,10 @@ class PanelWidget(QFrame):
         self._generation = 0
         self._loading = False
         self._vcs = _VcsInfo()
+        self._load_signals = _LoadSignals(self)
+        self._load_signals.listed.connect(self._on_listed)
+        self._load_signals.annotated.connect(self._on_annotated)
+        self._load_signals.failed.connect(self._on_load_failed)
         self._watcher = DirectoryWatcher(self)
         self._watcher.directory_changed.connect(self._on_dir_changed)
         self._refresh_timer = QTimer(self)
@@ -454,6 +527,7 @@ class PanelWidget(QFrame):
             self._flash_path_invalid()
             return
         tab = self._current_tab
+        previous = tab.path
         if push_history:
             tab.history.push(resolved)
         if resolved != tab.path:
@@ -484,10 +558,11 @@ class PanelWidget(QFrame):
         self._watcher.watch(resolved)
         self._load_directory(resolved)
         self.path_changed.emit(resolved)
-        try:
-            ConfigManager.get_instance()._db.add_path_history(resolved)
-        except Exception:
-            pass
+        if push_history and resolved != previous:
+            # user navigation only (a refresh is not history); the SQLite commit
+            # is a few ms of disk work that has no business on the GUI thread
+            db = ConfigManager.get_instance()._db
+            QThreadPool.globalInstance().start(_CallWorker(lambda: db.add_path_history(resolved)))
 
     def _flash_path_invalid(self) -> None:
         self._path_edit.setProperty("invalid", "true")
@@ -495,50 +570,32 @@ class PanelWidget(QFrame):
 
     def _load_directory(self, path: str) -> None:
         self._generation += 1
-        gen = self._generation
-        show_hidden = self._current_tab.show_hidden
-        loop = self._get_loop()
-        if loop and loop.is_running():
-            self._loading = True
-            asyncio.ensure_future(self._load_async(path, show_hidden, gen), loop=loop)
-        else:
-            self._load_sync(path, show_hidden)
+        self._loading = True
+        worker = _LoadWorker(
+            self._load_signals, self._fs, self._vcs, path, self._current_tab.show_hidden,
+            self._generation, self._is_current_generation,
+        )
+        QThreadPool.globalInstance().start(worker)
 
-    @staticmethod
-    def _get_loop() -> asyncio.AbstractEventLoop | None:
-        try:
-            return asyncio.get_event_loop()
-        except RuntimeError:
-            return None
+    def _is_current_generation(self, gen: int) -> bool:
+        return gen == self._generation
 
-    async def _load_async(self, path: str, show_hidden: bool, gen: int) -> None:
-        try:
-            loop = asyncio.get_event_loop()
-            entries = await self._fs.list_directory(path, show_hidden=show_hidden)
-            if gen != self._generation:
-                return
-            await loop.run_in_executor(None, self._vcs.annotate, path, entries)
-            if gen != self._generation:
-                return
-            self._apply_entries(entries, path)
-        except Exception as exc:
-            if gen == self._generation:
-                logger.warning("Failed to load %s: %s", path, exc)
-                self._info_label.setText(f"Error: {exc}")
-        finally:
-            if gen == self._generation:
-                self._loading = False
+    def _on_listed(self, gen: int, entries: list) -> None:
+        if gen != self._generation:
+            return
+        self._loading = False
+        self._apply_entries(entries, self.current_path)
 
-    def _load_sync(self, path: str, show_hidden: bool) -> None:
-        try:
-            loop = asyncio.new_event_loop()
-            entries = loop.run_until_complete(self._fs.list_directory(path, show_hidden=show_hidden))
-            loop.close()
-            self._vcs.annotate(path, entries)
-            self._apply_entries(entries, path)
-        except Exception as exc:
-            logger.warning("Failed to load %s: %s", path, exc)
-            self._info_label.setText(f"Error: {exc}")
+    def _on_annotated(self, gen: int) -> None:
+        if gen == self._generation:
+            self._table.file_model().vcs_updated()
+
+    def _on_load_failed(self, gen: int, message: str) -> None:
+        if gen != self._generation:
+            return
+        self._loading = False
+        logger.warning("Failed to load %s: %s", self.current_path, message)
+        self._info_label.setText(f"Error: {message}")
 
     def _apply_entries(self, entries: list[FileEntry], path: str) -> None:
         self._unfiltered = list(entries)

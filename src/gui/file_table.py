@@ -137,6 +137,15 @@ class FileTableModel(QAbstractTableModel):
         self._entries = entries
         self.endResetModel()
 
+    def vcs_updated(self) -> None:
+        """The entries' VCS state was filled in after the listing was shown:
+        repaint the icons (dot overlay) and tooltips of the Name column."""
+        if self._entries:
+            self.dataChanged.emit(
+                self.index(0, _COL_NAME), self.index(len(self._entries) - 1, _COL_NAME),
+                [Qt.ItemDataRole.DecorationRole, Qt.ItemDataRole.ToolTipRole],
+            )
+
     def get_entry(self, row: int) -> FileEntry | None:
         if 0 <= row < len(self._entries):
             return self._entries[row]
