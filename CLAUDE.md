@@ -188,7 +188,10 @@ pustí mouse capture a OLE drag zruší, pokud není fyzicky stisknuté tlačít
 `SendInput` po celou dobu (stisk i uvolnění nad naším stavovým řádkem, `client_bottom_center`, nikdy nad rámem okna =
 resize smyčka); (2) Qt musí ten stisk zpracovat **před** `DoDragDrop`, jinak jeho SetCapture uvnitř smyčky sebere
 capture OLE = cancel; (3) smyčka OLE se budí jen vstupem – hlídací vlákno každých 80 ms vkládá nulový pohyb myši
-(`PostThreadMessage` OLE bere jako ztrátu capture = cancel); (4) Qt časovače uvnitř smyčky OLE neběží, proto vlákno.
+(`PostThreadMessage` OLE bere jako ztrátu capture = cancel); (4) Qt časovače uvnitř smyčky OLE neběží, proto vlákno;
+(5) zaseknutý Esc nebo Enter (ztracený key-up, třeba spolknutý hookem nebo jinou aplikací) ukončí drag hned při
+startu (OLE čte fEscapePressed ze stavu kláves) – `release_stuck_keys` pošle před `DoDragDrop` syntetický key-up
+obou kláves a vynuluje bity „stisknuto od minula“.
 Vlákno drží i low-level keyboard hook (Enter = drop, Esc = cancel, šipky = kurzor o 1/10 monitoru, klávesy se
 spolknou, aby je nedostala aplikace vpředu; ctypes musí mít `restype` HMODULE/HHOOK, jinak se 64bit handle usekne a
 `SetWindowsHookExW` tiše selže) a při změně foreground okna posune kurzor do jeho středu. Po dobu dragu jsou systémové

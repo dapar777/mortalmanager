@@ -55,7 +55,8 @@ MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0002, 0x0004
 MOUSEEVENTF_ABSOLUTE = 0x8000
 MOUSEEVENTF_VIRTUALDESK = 0x4000
-INPUT_MOUSE = 0
+INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
+KEYEVENTF_KEYUP = 0x0002
 VK_RETURN, VK_ESCAPE = 0x0D, 0x1B
 VK_LEFT, VK_UP, VK_RIGHT, VK_DOWN = 0x25, 0x26, 0x27, 0x28
 ARROWS = {VK_LEFT: (-1, 0), VK_RIGHT: (1, 0), VK_UP: (0, -1), VK_DOWN: (0, 1)}
@@ -80,9 +81,14 @@ class _MOUSEINPUT(ctypes.Structure):
                 ("time", wt.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
 
 
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wt.WORD), ("wScan", wt.WORD), ("dwFlags", wt.DWORD), ("time", wt.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
 class _INPUT(ctypes.Structure):
     class _U(ctypes.Union):
-        _fields_ = [("mi", _MOUSEINPUT)]
+        _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT)]
     _anonymous_ = ("u",)
     _fields_ = [("type", wt.DWORD), ("u", _U)]
 
@@ -111,6 +117,25 @@ def _send_mouse(flags: int, dx: int = 0, dy: int = 0) -> None:
     inp.type = INPUT_MOUSE
     inp.mi = _MOUSEINPUT(dx, dy, 0, flags, 0, None)
     _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+
+
+def _send_key_up(vk: int) -> None:
+    inp = _INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.ki = _KEYBDINPUT(vk, 0, KEYEVENTF_KEYUP, 0, None)
+    _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+
+
+def release_stuck_keys() -> None:
+    """A stuck Esc (lost key-up, e.g. swallowed by a hook or eaten by another app) ends
+    the drag the moment it starts: OLE reads fEscapePressed from the key state. A stuck
+    Enter would drop at once. Send a key-up for both and clear the "pressed since the
+    last call" bits before the drag."""
+    for vk in (VK_ESCAPE, VK_RETURN):
+        _send_key_up(vk)
+    time.sleep(0.03)
+    for vk in (VK_ESCAPE, VK_RETURN):
+        _user32.GetAsyncKeyState(vk)
 
 
 def move_cursor(x: int, y: int) -> None:
@@ -403,6 +428,7 @@ def run_keyboard_drag(paths: list[str], own_hwnd: int) -> str:
     # The cursor itself stays where the user left it: it only visits the status bar for the
     # press / release (a few ms) and is put back, and moves for real only after Alt+Tab.
     anchor = client_bottom_center(own_hwnd)
+    release_stuck_keys()                          # a stuck Esc would cancel the drag immediately
     with _SystemCursorOverride(hcur):
         origin = cursor_pos()
         if anchor:
