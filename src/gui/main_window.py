@@ -638,10 +638,17 @@ class MainWindow(QMainWindow):
 
     def _file_hit(self, path: str, name: str, is_dir: bool) -> dict:
         p = self._active_panel_widget
+
+        def run(path: str = path) -> None:
+            p.reveal(path)
+            # the palette gives focus back to where it was opened from (often the
+            # terminal line); the pick is now the panel cursor, so the panel gets it
+            p.give_focus()
+
         return {
             "category": "File", "label": f"{name}   —   {IndexService.display_dir(path)}",
             "icon": "folder" if is_dir else "file", "tooltip": path,
-            "run": lambda path=path: p.reveal(path),
+            "run": run,
         }
 
     def _file_search(self, query: str, limit: int = 200, kind: str = "all") -> list[dict]:
