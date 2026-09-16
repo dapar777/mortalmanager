@@ -34,11 +34,35 @@ def test_scan_search_and_excludes(tmp_path: Path):
 
     hits = idx.search("port_fin")           # trigram substring, case-insensitive, '_' is literal
     assert [h[1] for h in hits] == ["Report_final.txt"]
-    assert idx.search("main window") == [] or True   # tokens must all occur in the *name*
+    assert [h[1] for h in idx.search("main window")] == ["main_window.py"]
     hits = idx.search("main win")
     assert [h[1] for h in hits] == ["main_window.py"]
     assert idx.search("md")[0][1] == "notes.md"        # short tokens fall back to LIKE
     assert idx.count() == 5
+    idx.close()
+
+
+def test_words_match_path_one_in_name(tmp_path: Path):
+    """"CAR 3x" finds svn/CAR/db/2024_3x: every word somewhere in the path, at
+    least one in the name (long words via the trigram index, short via LIKE)."""
+    root = tmp_path / "root"
+    (root / "svn" / "CAR" / "db" / "2024_3x").mkdir(parents=True)
+    (root / "svn" / "CAR" / "db" / "2024_3x" / "data.bin").write_text("x")
+    (root / "svn" / "OTHER" / "2024_3x").mkdir(parents=True)
+    (root / "svn" / "OTHER" / "car_list.txt").write_text("x")
+    idx = FileIndex(tmp_path / "index.db")
+    idx.scan_root(str(root), Excluder([], []), idx.next_gen())
+
+    hits = idx.search("CAR 3x", kind="dirs")
+    assert [h[1] for h in hits] == ["2024_3x"] and "CAR" in hits[0][0]      # not the OTHER one
+    assert len(idx.search("3x", kind="dirs")) == 2                          # single word: name only
+    assert [h[1] for h in idx.search("car db", kind="dirs")] == ["db"]      # short word in name, long in path
+    # "db" / "2024_3x" have no word in the name; car_list.txt has "car" in the name and "svn" in the path
+    assert [h[1] for h in idx.search("svn car")] == ["CAR", "car_list.txt"]
+    names = [h[1] for h in idx.search("other car")]
+    assert names == ["car_list.txt"]                                        # name matches "car", path "other"
+    assert [h[1] for h in idx.search("car bin")] == ["data.bin"]            # long word only in the path
+    assert idx.search("car zzz") == []
     idx.close()
 
 

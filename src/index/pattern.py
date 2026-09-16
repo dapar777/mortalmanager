@@ -1,6 +1,8 @@
 """Smart query interpretation shared by the file index and the palette.
 
-    plain words      → every word must occur as a substring (case-insensitive)
+    plain words      → every word must occur as a substring (case-insensitive);
+                       the index checks them against the full path with at
+                       least one in the name ("CAR 3x" → C:\\svn\\CAR\\db\\2024_3x)
     glob (* or ?)    → fnmatch-style mask on the whole name ("*.txt", "rep?rt*")
     regex            → anything with regex-only metacharacters (^ $ [ ] ( ) | + { } \\
                        or ".*" / ".+"), used as a case-insensitive re.search on the name
