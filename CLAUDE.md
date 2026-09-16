@@ -140,7 +140,10 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   Alt+F1 / Alt+F2 = `MainWindow._show_drive_menu(side)` (menu disků nad panelem, výběr panel aktivuje).
   Dlouhá menu jdou přes `panel.fit_menu_on_screen` (vrací zvolenou akci), které při přetečení obrazovky zmenší svislý padding položek
   jen o tolik, kolik je nutné (per-menu stylesheet), a až pak sáhne po QSS property `compact="dense"` (menší písmo),
-  aby Qt nelámalo menu do dvou sloupců. Kontextové menu na `..`/prázdné ploše
+  aby Qt nelámalo menu do dvou sloupců. Stejné podtržené písmeno u více položek: QMenu skočí na další shodu
+  s okamžitým otevřením podmenu (fokus přejde dovnitř, další stisk už necykluje); globální event filter
+  `MainWindow.eventFilter` proto pro každé QMenu volá `gui/menu_mnemonics.step_mnemonic`, které posune zvýraznění
+  syntetickými Down (Down podmenu neotvírá); jediná shoda zůstává Qt (spustí / otevře). Kontextové menu na `..`/prázdné ploše
   je menu aktuální složky (`_populate_windows_shell_menu([cur])`; kořen disku se váže přes desktop folder a absolutní
   pidl). Kontextové menu má nahoře sekci „Frequently used“:
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB

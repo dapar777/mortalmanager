@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSizePolicy,
     QSplitter,
@@ -432,6 +433,11 @@ class MainWindow(QMainWindow):
             if delta:
                 self._zoom_step(1 if delta > 0 else -1)
             return True
+        if event.type() == QEvent.Type.KeyPress and isinstance(obj, QMenu):
+            # several items with the same underlined letter: cycle, don't pop a submenu open
+            from .menu_mnemonics import step_mnemonic
+            if step_mnemonic(obj, event):
+                return True
         return super().eventFilter(obj, event)
 
     def focusNextPrevChild(self, next: bool) -> bool:  # noqa: N802
