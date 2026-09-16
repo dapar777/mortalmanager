@@ -247,12 +247,16 @@ class FileIndex:
         with self._lock:
             return int(self._conn.execute("SELECT count(*) FROM files").fetchone()[0])
 
+    SCAN_CAP = 4000     # matches a name scan collects before the ORDER BY picks the shortest paths
+
     def search(self, query: str, limit: int = 200, kind: str = "all",
                dirs_only: bool = False) -> list[tuple[str, str, bool]]:
         """Name search; ``kind`` is "all", "files" or "dirs". Returns
         (path, name, is_dir) ordered by path components (case-insensitive), so
         a folder comes right before its content: C:\\dir, C:\\dir\\dr1,
-        C:\\dir\\dr2. ``limit`` still picks the shortest names (SQL ORDER BY).
+        C:\\dir\\dr2. ``limit`` picks the shortest *paths* (SQL ORDER BY): a
+        parent has a shorter path than any of its children, so whenever a
+        child made it into the result its matching parent did too.
 
         The query is interpreted by index.pattern.parse(): words, a glob mask,
         or a regex. A mask / regex applies to the name; its literal runs of 3+
@@ -294,8 +298,15 @@ class FileIndex:
             extra.append("f.name REGEXP ?")
             extra_params.append(regex)
         for w in path_words:
-            extra.append("f.path REGEXP ?")
-            extra_params.append(re.escape(w))
+            if w.isascii():
+                # C-level LIKE (case-insensitive for ASCII) is ~10x cheaper per row than the
+                # Python REGEXP callback; ESCAPE is fine here – this is the joined row, not the
+                # FTS name column whose LIKE optimisation ESCAPE would disable
+                extra.append("f.path LIKE ? ESCAPE '\\'")
+                extra_params.append("%" + re.sub(r"([\\%_])", r"\\\1", w) + "%")
+            else:
+                extra.append("f.path REGEXP ?")
+                extra_params.append(re.escape(w))
         tail = "".join(" AND " + c for c in extra)
         kind_cond = {"dirs": " AND {a}.is_dir = 1", "files": " AND {a}.is_dir = 0"}.get(kind, "")
         cols = "f.path AS path, f.name AS name, f.is_dir AS is_dir"
@@ -309,32 +320,34 @@ class FileIndex:
                 f" WHERE files_fts MATCH ?{kind_cond.format(a='f')}{tail}",
                 [match, *extra_params],
             ))
+        # a scan cannot be ordered before it is complete; it walks the covering index in
+        # *name* order, so its own LIMIT must be generous or a parent whose name sorts
+        # after its children's names would be cut off before the ORDER BY below sees it
+        scan_cap = max(limit, self.SCAN_CAP)
         if short_toks:
             # alias n is scanned through the covering index files(name, is_dir) (only name /
             # is_dir / rowid are read from it), the row itself is fetched by rowid for the
-            # few matches; LIMIT stops the scan early for common tokens
+            # matches; the cap stops the scan early for common tokens
             like = " OR ".join("n.name LIKE ?" for _ in short_toks)
             branches.append((
                 f"SELECT {cols} FROM files AS n JOIN files AS f ON f.id = n.id"
                 f" WHERE ({like}){kind_cond.format(a='n')}{tail} LIMIT ?",
-                [*(f"%{t}%" for t in short_toks), *extra_params, limit],
+                [*(f"%{t}%" for t in short_toks), *extra_params, scan_cap],
             ))
         if regex is not None and not branches:
             branches.append((
                 f"SELECT {cols} FROM files f WHERE 1{kind_cond.format(a='f')}{tail} LIMIT ?",
-                [*extra_params, limit],
+                [*extra_params, scan_cap],
             ))
 
+        # shortest paths first = highest in the tree; a parent always beats its children
         params: list[object] = []
-        if len(branches) == 1 and not long_toks:
-            sql, params = branches[0]                       # plain scan: unordered, stops at limit
-        else:
-            parts = []
-            for text, ps in branches:
-                parts.append(f"SELECT * FROM ({text})")
-                params.extend(ps)
-            sql = f"SELECT path, name, is_dir FROM ({' UNION '.join(parts)}) ORDER BY length(name), name LIMIT ?"
-            params.append(limit)
+        parts = []
+        for text, ps in branches:
+            parts.append(f"SELECT * FROM ({text})")
+            params.extend(ps)
+        sql = f"SELECT path, name, is_dir FROM ({' UNION '.join(parts)}) ORDER BY length(path), path LIMIT ?"
+        params.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         # tree order for the palette: parent above its children, siblings alphabetical

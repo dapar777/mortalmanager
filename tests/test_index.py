@@ -78,6 +78,27 @@ def test_results_in_tree_order(tmp_path: Path):
     idx.close()
 
 
+def test_parent_survives_the_limit(tmp_path: Path):
+    """More matches than ``limit``: the limit keeps the shortest paths, so a matching
+    parent is never dropped in favour of its children – for the trigram branch (long
+    word) and for the name scan of a short word, which walks names alphabetically
+    ("a3x…" before "2024_3x")."""
+    root = tmp_path / "root"
+    parent = root / "p3x_2024"
+    for i in range(40):
+        (parent / f"a3x_{i:02d}").mkdir(parents=True)
+        (parent / f"a3x_{i:02d}" / "d3x_deep").mkdir()
+    idx = FileIndex(tmp_path / "index.db")
+    idx.scan_root(str(root), Excluder([], []), idx.next_gen())
+    # "3x" = name scan (short word), "3x_" = trigram branch, "2024 3x" = both + path words
+    for q in ("3x", "3x_", "2024 3x"):
+        hits = idx.search(q, limit=10, kind="dirs")
+        assert len(hits) == 10, q
+        assert hits[0][0] == str(parent), q                     # the parent, at the top
+        assert all(h[0].startswith(str(parent)) for h in hits), q
+    idx.close()
+
+
 def test_live_add_remove_and_stale_purge(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()

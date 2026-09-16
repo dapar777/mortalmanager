@@ -175,7 +175,10 @@ spustí, znovu naplní seznam a paletu nezavře; `DatabaseManager.delete_command
 `index/pattern.py`: slova (**každé někde v celé cestě, aspoň jedno v názvu** – „CAR 3x“ najde
 `c:\svn\CAR\db\2024_3x`; slova ≥3 znaky jdou trigramem OR-ovaně, kratší LIKE skenem, zbytek cesty ověří REGEXP),
 maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); výsledky jsou seřazené **podle cesty po složkách**
-(rodič nad svými potomky: `C:\dir`, `C:\dir\dr1`, `C:\dir\dr2`), LIMIT přitom vybírá nejkratší názvy; pro index se
+(rodič nad svými potomky: `C:\dir`, `C:\dir\dr1`, `C:\dir\dr2`); do LIMITu vybírá SQL **nejkratší cesty** (rodič má
+vždy kratší cestu než potomek, takže nikdy nevypadne, když je v seznamu jeho potomek – výběr podle délky názvu ani
+sken indexu `files(name…)` v abecedním pořadí názvů to nezaručí, proto má sken krátkých slov strop `SCAN_CAP` 4000 shod
+místo LIMITu); pro index se
 z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek ověří SQLite funkce REGEXP.
 
 ## Pravidla vzhledu (viz solarqt MANUAL.md)
