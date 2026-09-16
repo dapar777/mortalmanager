@@ -73,7 +73,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   (`get_instance()`) s dataclassami `AppConfig` (mj. `theme`, `zoom`) / `PanelConfig`.
 - **`index/`** — index názvů souborů pro paletu, sdílený všemi instancemi: `file_index.py` (SQLite
   `%APPDATA%\UltimateCommander\index.db`, WAL; tabulka `files` + FTS5 s **trigram** tokenizerem, takže `MATCH '"rep"'` je
-  indexový dotaz (**ne** `LIKE … ESCAPE` – ESCAPE optimalizaci vypne, 500 ms místo 5 ms na 1,2 M záznamů); generace `gen` pro čištění smazaných po plném skenu; `Excluder` = jména složek kdekoli + prefixy
+  indexový dotaz (**ne** `LIKE … ESCAPE` – ESCAPE optimalizaci vypne, 500 ms místo 5 ms na 1,2 M záznamů); krátká slova pod 3 znaky
+  (pod minimem trigramu) jdou LIKE skenem **pokrývajícího indexu `files(name, is_dir)`** přes self-join, ~110 ms
+  na 1 M záznamů místo 300 ms tabulkou; generace `gen` pro čištění smazaných po plném skenu; `Excluder` = jména složek kdekoli + prefixy
   cest; `is_network_path` vyřadí síťové disky a UNC z kořenů i když jsou v nastavení, cloudové složky na FIXED disku
   zůstávají) a `indexer.py` (vlákno; **vůdce = držitel Windows named mutexu** `Local\UltimateCommander.Indexer`, ostatní
   instance jen čtou a zkoušejí to každých 30 s; plný sken po `rescan_hours`, živě přes `ReadDirectoryChangesW`
@@ -122,7 +124,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
   úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). Ctrl+S nebo `*` (hlavní klávesnice; numerická `*` zůstává výběr) = rychlý filtr jako v TC: pole pod seznamem,
-  podřetězec nebo maska `*?`, Esc zruší, Enter vrátí fokus do seznamu s filtrem, šipky posouvají kurzor; filtr je
+  podřetězec nebo maska `*?`, Esc zruší, Enter vrátí fokus do seznamu s filtrem, šipky posouvají kurzor, klávesa
+  Menu / Shift+F10 ve filtru otevře kontextové menu položky pod kurzorem (`eventFilter` panelu, ne menu QLineEditu;
+  pravé tlačítko na poli nechává editační menu); filtr je
   stav tabu (`_Tab.filter_text`), maže se při změně adresáře; `_unfiltered` drží plný výpis. Označování jako v TC: Insert/mezerník přepne a posune kurzor, Shift+šipky/PgUp/PgDn/Home/End přepnou přejeté řádky
   (`FileTableView._shift_navigate` → signál `toggle_rows`), Shift+klik označí rozsah (`mark_rows`), Ctrl+klik přepne;
   stav označení drží `_Tab.selection` (`SelectionManager`), model jen zobrazuje (`set_selected`). F2 / Shift+F6 = přejmenování v místě
@@ -157,12 +161,17 @@ najde „Sort by › Name › Ascending“.
 Dynamická úroveň = položka se `search` (callable(q) → seznam), např. „Find file on disk“ nad indexem; `extra_search`
 palety přidá na kořenové úrovni od 3 znaků pár souborů a příkazů z historie terminálu („Terminal history ›“ je
 i samostatná úroveň; spuštění jde přes `EmbeddedTerminalWidget.run_command`). Nalezený soubor otevře
-`PanelWidget.reveal(path)` (kurzor na souboru) a fokus jde do panelu (`give_focus`), i když paleta byla otevřená
-z řádky terminálu; položky z historie terminálu (`_prefill_terminal`) naopak fokus v řádce nechají.
+`PanelWidget.reveal(path)` (kurzor na souboru). **Každá navigační položka palety** (nálezy z indexu, Favourites,
+History, Home, Go up/Back/Forward, Switch tab, druhý panel – helper `go(panel, path)` v `_build_palette_commands`)
+po navigaci volá `give_focus()` aktivního panelu: QDialog po zavření vrátí fokus tam, odkud byl otevřen (typicky
+řádka terminálu), a bez toho by uživatel zůstal v řádce. Položky z historie terminálu (`_prefill_terminal`)
+naopak fokus v řádce nechávají.
 Prefixy na kořenové úrovni (`parse_mode`): mezera = jen příkazy, `c ` historie terminálu (výběr příkaz jen předvyplní
 do řádky přes `EmbeddedTerminalWidget.prefill`), `dc ` mazání z historie (položky s `keep_open=True`: `_run_current` je
 spustí, znovu naplní seznam a paletu nezavře; `DatabaseManager.delete_command_history` maže fyzicky: `secure_delete`, `wal_checkpoint(TRUNCATE)`, `VACUUM`, test to hlídá), `a ` soubory i složky, `f ` soubory, `d ` složky. Dotaz interpretuje
-`index/pattern.py`: slova (podřetězce), maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); pro index se
+`index/pattern.py`: slova (**každé někde v celé cestě, aspoň jedno v názvu** – „CAR 3x“ najde
+`c:\svn\CAR\db\2024_3x`; slova ≥3 znaky jdou trigramem OR-ovaně, kratší LIKE skenem, zbytek cesty ověří REGEXP),
+maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); pro index se
 z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek ověří SQLite funkce REGEXP.
 
 ## Pravidla vzhledu (viz solarqt MANUAL.md)

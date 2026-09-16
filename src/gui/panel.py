@@ -927,7 +927,16 @@ class PanelWidget(QFrame):
         self._apply_entries(getattr(self, "_unfiltered", []), self.current_path)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        from PySide6.QtCore import QEvent
+        from PySide6.QtCore import QEvent, QPoint
+        if obj is self._filter_edit and event.type() == QEvent.Type.ContextMenu:
+            from PySide6.QtGui import QContextMenuEvent
+            if event.reason() == QContextMenuEvent.Reason.Keyboard:
+                # Menu key / Shift+F10 while typing a filter: the user means the entry under
+                # the cursor, not the line edit's Undo/Cut/Paste menu (right-click keeps that)
+                idx = self._table.currentIndex()
+                pos = self._table.visualRect(idx).center() if idx.isValid() else QPoint(0, 0)
+                self._show_context_menu(pos)
+                return True
         if obj is self._filter_edit and event.type() == QEvent.Type.KeyPress:
             key = event.key()
             if key == Qt.Key.Key_Escape:
