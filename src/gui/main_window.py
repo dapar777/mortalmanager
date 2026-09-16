@@ -806,8 +806,16 @@ class MainWindow(QMainWindow):
                 for d in self._drive_bar.drives()
             ]
 
+        def go(panel: PanelWidget, path: str) -> None:
+            """Palette navigation: the pick is the panel cursor now, so the active panel
+            takes the focus (the dialog would give it back to where it was opened from,
+            e.g. the terminal line)."""
+            panel.navigate_to(path)
+            p.give_focus()
+
         def tab_children() -> list[dict]:
-            return [e("Tab", label, lambda i=i: p.switch_tab(i), checked=(i == p._current_tab_index))
+            return [e("Tab", label, lambda i=i: (p.switch_tab(i), p.give_focus()),
+                      checked=(i == p._current_tab_index))
                     for i, label in enumerate(p.tab_labels())]
 
         def favorite_children() -> list[dict]:
@@ -816,12 +824,12 @@ class MainWindow(QMainWindow):
             except Exception:
                 favs = []
             items = [e("Favourite", f"{f.alias or Path(f.path).name}  ·  {f.path}",
-                       lambda path=f.path: p.navigate_to(path), icon="star") for f in favs]
+                       lambda path=f.path: go(p, path), icon="star") for f in favs]
             items.append(e("Favourite", "Add current folder to favourites…", self._open_favorites, "Ctrl+D", icon="plus"))
             return items
 
         def history_children() -> list[dict]:
-            return [e("History", path, lambda path=path: p.navigate_to(path), icon="folder")
+            return [e("History", path, lambda path=path: go(p, path), icon="folder")
                     for path in p.history_paths()]
 
         def zoom_children() -> list[dict]:
@@ -842,8 +850,8 @@ class MainWindow(QMainWindow):
 
         def swap_panels() -> None:
             a, b = p.current_path, other.current_path
-            p.navigate_to(b)
             other.navigate_to(a)
+            go(p, b)
 
         return [
             # files
@@ -886,10 +894,10 @@ class MainWindow(QMainWindow):
             e("Navigate", "Favourites", children=favorite_children, icon="star_outline"),
             e("Navigate", "History", children=history_children, shortcut="Alt+Down", icon="clock"),
             e("Navigate", "Refresh", lambda: p.refresh(), "Ctrl+R", icon="refresh"),
-            e("Navigate", "Go up", lambda: p._go_up(), "Backspace", icon="arrow_up"),
-            e("Navigate", "Back", lambda: p._go_back(), "Alt+Left", icon="arrow_left"),
-            e("Navigate", "Forward", lambda: p._go_forward(), "Alt+Right", icon="arrow_right"),
-            e("Navigate", "Home folder", lambda: p.navigate_to(str(Path.home())), icon="home"),
+            e("Navigate", "Go up", lambda: (p._go_up(), p.give_focus()), "Backspace", icon="arrow_up"),
+            e("Navigate", "Back", lambda: (p._go_back(), p.give_focus()), "Alt+Left", icon="arrow_left"),
+            e("Navigate", "Forward", lambda: (p._go_forward(), p.give_focus()), "Alt+Right", icon="arrow_right"),
+            e("Navigate", "Home folder", lambda: go(p, str(Path.home())), icon="home"),
             e("Navigate", "Edit path", self._focus_path, "Ctrl+L"),
             e("Navigate", "New tab", lambda: p._new_tab_from_current(), "Ctrl+T", icon="plus"),
             e("Navigate", "Close tab", lambda: p.close_current_tab(), icon="close"),
@@ -904,8 +912,8 @@ class MainWindow(QMainWindow):
                 self.mapToGlobal(p.rect().center()))),
             # panels
             e("Panels", "Switch active panel", self._switch_panel, "Tab", icon="columns"),
-            e("Panels", "Open this folder in the other panel", lambda: other.navigate_to(p.current_path)),
-            e("Panels", "Open the other panel's folder here", lambda: p.navigate_to(other.current_path)),
+            e("Panels", "Open this folder in the other panel", lambda: go(other, p.current_path)),
+            e("Panels", "Open the other panel's folder here", lambda: go(p, other.current_path)),
             e("Panels", "Swap panels", swap_panels),
             # files on disk, terminal history
             e("Navigate", "Find file on disk", search=lambda q: self._file_search(q), icon="search",
