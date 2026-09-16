@@ -1230,13 +1230,17 @@ class PanelWidget(QFrame):
         count = win32gui.GetMenuItemCount(hmenu)
         inserted = False
         for idx in range(count):
+            text = _get_menu_string(hmenu, idx)
+            submenu = win32gui.GetSubMenu(hmenu, idx)
+            # GetMenuState of a popup item carries the *number of its entries* in the
+            # high byte, so "state & MF_SEPARATOR" (0x800) is true for a submenu with
+            # 8–15 or 24–31 entries – TortoiseSVN's ~25-entry menu used to become a
+            # separator. Decide "submenu" first, "separator" only for plain items.
             state = win32gui.GetMenuState(hmenu, idx, win32con.MF_BYPOSITION)
-            if state & win32con.MF_SEPARATOR:
+            if not submenu and state & win32con.MF_SEPARATOR:
                 menu.addSeparator()
                 inserted = True
                 continue
-            text = _get_menu_string(hmenu, idx)
-            submenu = win32gui.GetSubMenu(hmenu, idx)
             if submenu:
                 sub = menu.addMenu(text)
                 icon = _get_item_icon(hmenu, idx)
