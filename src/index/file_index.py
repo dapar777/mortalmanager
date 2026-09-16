@@ -91,6 +91,12 @@ def default_config() -> IndexConfig:
     return IndexConfig()
 
 
+def _path_key(path: str) -> tuple[str, ...]:
+    """Sort key: path components, case-insensitive – a folder sorts right before
+    its content and before a sibling whose name merely starts the same."""
+    return tuple(path.casefold().replace("/", "\\").split("\\"))
+
+
 class Excluder:
     """Fast exclusion test: directory names (anywhere) and path prefixes."""
 
@@ -244,7 +250,9 @@ class FileIndex:
     def search(self, query: str, limit: int = 200, kind: str = "all",
                dirs_only: bool = False) -> list[tuple[str, str, bool]]:
         """Name search; ``kind`` is "all", "files" or "dirs". Returns
-        (path, name, is_dir), shortest names first.
+        (path, name, is_dir) ordered by path components (case-insensitive), so
+        a folder comes right before its content: C:\\dir, C:\\dir\\dr1,
+        C:\\dir\\dr2. ``limit`` still picks the shortest names (SQL ORDER BY).
 
         The query is interpreted by index.pattern.parse(): words, a glob mask,
         or a regex. A mask / regex applies to the name; its literal runs of 3+
@@ -329,6 +337,8 @@ class FileIndex:
             params.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
+        # tree order for the palette: parent above its children, siblings alphabetical
+        rows.sort(key=lambda r: _path_key(r[0]))
         return [(r[0], r[1], bool(r[2])) for r in rows]
 
     # ------------------------------------------------------------------ scanning

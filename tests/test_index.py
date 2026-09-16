@@ -66,6 +66,18 @@ def test_words_match_path_one_in_name(tmp_path: Path):
     idx.close()
 
 
+def test_results_in_tree_order(tmp_path: Path):
+    """Palette order: a folder above its children, then siblings – not by name length."""
+    root = tmp_path / "root"
+    for d in ("dir", "dir/dir_1", "dir/dir_2", "dir/dir_2/x_dir", "dir2", "a/dir"):
+        (root / d).mkdir(parents=True)
+    idx = FileIndex(tmp_path / "index.db")
+    idx.scan_root(str(root), Excluder([], []), idx.next_gen())
+    rel = [Path(h[0]).relative_to(root).as_posix() for h in idx.search("dir", kind="dirs")]
+    assert rel == ["a/dir", "dir", "dir/dir_1", "dir/dir_2", "dir/dir_2/x_dir", "dir2"]
+    idx.close()
+
+
 def test_live_add_remove_and_stale_purge(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()

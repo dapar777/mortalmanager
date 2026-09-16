@@ -45,7 +45,10 @@ Kořenové `temp_shell*_debug*.py` jsou jednorázové průzkumné skripty z lad�
 samotná funkce je v `PanelWidget._show_context_menu`. Pasti pywin32: `IContextMenu.InvokeCommand` bere **8prvkovou**
 n-tici `(fMask, hwnd, verb, params, dir, nShow, hotkey, hicon)` (9 prvků = tichý TypeError); COM se na GUI vlákně
 inicializuje jednou (`_com_init`) a nikdy neodinicializuje pod Qt; shell verby `open/delete/rename/copyaspath` se
-přeskakují (máme vlastní položky, shell „rename“ mimo Explorer nic nedělá). Pod `pythonw` jdou výjimky ze slotů do
+přeskakují (máme vlastní položky, shell „rename“ mimo Explorer nic nedělá). Při převodu HMENU na QMenu
+(`_add_shell_menu_items`) rozhoduj **nejdřív `GetSubMenu`, teprve pak `GetMenuState & MF_SEPARATOR`**: u položky
+s podmenu má `GetMenuState` v horním bajtu počet položek podmenu, takže podmenu s 8–15 nebo 24–31 položkami
+(TortoiseSVN) by jinak skončilo jako oddělovač. Pod `pythonw` jdou výjimky ze slotů do
 logu přes `sys.excepthook`.
 
 ## Architektura
@@ -171,7 +174,8 @@ do řádky přes `EmbeddedTerminalWidget.prefill`), `dc ` mazání z historie (p
 spustí, znovu naplní seznam a paletu nezavře; `DatabaseManager.delete_command_history` maže fyzicky: `secure_delete`, `wal_checkpoint(TRUNCATE)`, `VACUUM`, test to hlídá), `a ` soubory i složky, `f ` soubory, `d ` složky. Dotaz interpretuje
 `index/pattern.py`: slova (**každé někde v celé cestě, aspoň jedno v názvu** – „CAR 3x“ najde
 `c:\svn\CAR\db\2024_3x`; slova ≥3 znaky jdou trigramem OR-ovaně, kratší LIKE skenem, zbytek cesty ověří REGEXP),
-maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); pro index se
+maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); výsledky jsou seřazené **podle cesty po složkách**
+(rodič nad svými potomky: `C:\dir`, `C:\dir\dr1`, `C:\dir\dr2`), LIMIT přitom vybírá nejkratší názvy; pro index se
 z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek ověří SQLite funkce REGEXP.
 
 ## Pravidla vzhledu (viz solarqt MANUAL.md)
