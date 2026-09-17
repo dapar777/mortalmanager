@@ -888,11 +888,19 @@ class PanelWidget(QFrame):
     # ------------------------------------------------------------------ quick filter (Ctrl+S / '*')
 
     def _filter_entries(self, entries: list[FileEntry]) -> list[FileEntry]:
+        """Total Commander quick filter: plain text matches anywhere in the name,
+        ``* ? [`` make it a mask anchored at the start. The mask is matched as the
+        user types it, so a trailing ``*`` is implied unless the pattern already
+        ends with one – without that ``a*.txt`` would show nothing at ``a*.`` and
+        the list would blink empty on the way to every mask."""
         text = self._current_tab.filter_text.strip().lower()
         if not text:
             return entries
         import fnmatch
-        pattern = text if any(ch in text for ch in "*?[") else f"*{text}*"
+        if any(ch in text for ch in "*?["):
+            pattern = text if text.endswith("*") else f"{text}*"
+        else:
+            pattern = f"*{text}*"
         return [e for e in entries if e.is_parent or fnmatch.fnmatchcase(e.name.lower(), pattern)]
 
     def show_filter(self, initial: str = "") -> None:

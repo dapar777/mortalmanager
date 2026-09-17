@@ -127,7 +127,9 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
   úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). Ctrl+S nebo `*` (hlavní klávesnice; numerická `*` zůstává výběr) = rychlý filtr jako v TC: pole pod seznamem,
-  podřetězec nebo maska `*?`, Esc zruší, Enter vrátí fokus do seznamu s filtrem, šipky posouvají kurzor, klávesa
+  podřetězec nebo maska `*?[` (maska je kotvená na začátek názvu a **dokud nekončí `*`, doplní se koncová
+  hvězdička**, aby rozepsaná maska filtrovala průběžně – bez toho `a*.txt` cestou u `a*.` neukáže nic), Esc zruší,
+  Enter vrátí fokus do seznamu s filtrem, šipky posouvají kurzor, klávesa
   Menu / Shift+F10 ve filtru otevře kontextové menu položky pod kurzorem (`eventFilter` panelu, ne menu QLineEditu;
   pravé tlačítko na poli nechává editační menu); filtr je
   stav tabu (`_Tab.filter_text`), maže se při změně adresáře; `_unfiltered` drží plný výpis. Označování jako v TC: Insert/mezerník přepne a posune kurzor, Shift+šipky/PgUp/PgDn/Home/End přepnou přejeté řádky
