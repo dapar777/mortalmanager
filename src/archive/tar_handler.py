@@ -54,7 +54,7 @@ class TarHandler(ArchiveHandler):
 
     # ------------------------------------------------------------------ reading
 
-    def list_contents(self, archive_path: Path) -> list[ArchiveEntry]:
+    def list_contents(self, archive_path: Path, password: str | None = None) -> list[ArchiveEntry]:
         entries: list[ArchiveEntry] = []
         try:
             with tarfile.open(str(archive_path), self._read_mode(archive_path)) as tf:
@@ -78,7 +78,8 @@ class TarHandler(ArchiveHandler):
             raise ArchiveError(str(exc)) from exc
         return entries
 
-    def read_member(self, archive_path: Path, member_path: str) -> bytes:
+    def read_member(self, archive_path: Path, member_path: str,
+                    password: str | None = None) -> bytes:
         wanted = self.normalise(member_path)
         try:
             with tarfile.open(str(archive_path), self._read_mode(archive_path)) as tf:
@@ -97,6 +98,7 @@ class TarHandler(ArchiveHandler):
         archive_path: Path,
         destination: Path,
         members: list[str] | None = None,
+        password: str | None = None,
     ) -> None:
         from .extract import safe_target
 
@@ -132,7 +134,10 @@ class TarHandler(ArchiveHandler):
         sources: list[Path],
         base_dir: Path | None = None,
         level: int | None = None,
+        password: str | None = None,
     ) -> None:
+        if password:
+            raise ArchiveError("TAR archives cannot be encrypted – use 7z for that")
         mode = _WRITE_MODES[self.compression_of(archive_path)]
         kwargs = {"compresslevel": level} if level is not None and mode in ("w:gz", "w:bz2") else {}
         with tarfile.open(str(archive_path), mode, **kwargs) as tf:   # type: ignore[call-overload]
@@ -145,6 +150,7 @@ class TarHandler(ArchiveHandler):
         sources: list[Path],
         base_dir: Path | None = None,
         prefix: str = "",
+        password: str | None = None,
     ) -> None:
         if not archive_path.exists():
             self.create(archive_path, sources, base_dir)
@@ -161,10 +167,12 @@ class TarHandler(ArchiveHandler):
             for src in sources:
                 tf.add(str(src), arcname=self.arc_name(src, base_dir, prefix), recursive=True)
 
-    def delete_members(self, archive_path: Path, members: list[str]) -> None:
+    def delete_members(self, archive_path: Path, members: list[str],
+                       password: str | None = None) -> None:
         self._rebuild(archive_path, drop=set(members), extra=[])
 
-    def write_member(self, archive_path: Path, member_path: str, data: bytes) -> None:
+    def write_member(self, archive_path: Path, member_path: str, data: bytes,
+                     password: str | None = None) -> None:
         import io
 
         member = self.normalise(member_path)

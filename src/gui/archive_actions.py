@@ -75,6 +75,8 @@ class ArchiveActionsMixin:
                 "store_paths": opts.store_paths,
                 "append": opts.append,
                 "move_sources": opts.move_to_archive,   # honoured in _on_job_finished (C5)
+                "password": opts.password or (am.known_password(opts.target)
+                                              if opts.append else None),
             },
             description=f"Pack {len(paths)} item(s) into {opts.target.name}",
         )
@@ -164,6 +166,8 @@ class ArchiveActionsMixin:
         if am.get_handler(archive) is None:
             Toast.show_message(self, f"{archive.name} is not a supported archive", "error")
             return
+        if not self._active_panel_widget.ensure_password(str(archive)):
+            return                                   # encrypted and the user cancelled
         overwrite = True
         if destination.exists() and any(destination.iterdir()):
             # X6: one question for the whole job, like the copy dialog's checkbox
@@ -184,7 +188,8 @@ class ArchiveActionsMixin:
             sources=[str(archive)],
             destination=str(destination),
             options={"archive": str(archive), "members": members,
-                     "strip_prefix": strip_prefix, "overwrite": overwrite},
+                     "strip_prefix": strip_prefix, "overwrite": overwrite,
+                     "password": am.known_password(archive)},
             description=f"Extract {what} from {archive.name}",
         )
         self._submit(spec, f"Extracting {archive.name}…")
@@ -207,7 +212,8 @@ class ArchiveActionsMixin:
             sources=paths,
             destination=str(location),
             options={"archive": str(location.archive), "base_dir": base,
-                     "prefix": location.inner},
+                     "prefix": location.inner,
+                     "password": am.known_password(location.archive)},
             description=f"Add {len(paths)} item(s) to {location.archive.name}",
         )
         self._submit(spec, f"Adding to {location.archive.name}…")
@@ -238,7 +244,8 @@ class ArchiveActionsMixin:
             job_type=JobType.ARCHIVE_DELETE,
             sources=members,
             destination=str(location),
-            options={"archive": str(location.archive)},
+            options={"archive": str(location.archive),
+                     "password": am.known_password(location.archive)},
             description=f"Delete {len(members)} item(s) from {location.archive.name}",
         )
         self._submit(spec, f"Deleting from {location.archive.name}…")

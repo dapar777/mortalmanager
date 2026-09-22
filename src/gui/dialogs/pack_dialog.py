@@ -42,6 +42,7 @@ class PackOptions:
     store_paths: bool = True
     move_to_archive: bool = False
     append: bool = False          # target exists and should be added to
+    password: str | None = None   # only formats with can_encrypt (7z) offer this
 
 
 def available_formats() -> list[tuple[str, str]]:
@@ -99,12 +100,18 @@ class PackDialog(QDialog):
         self._move = QCheckBox("Move to archive (delete the originals afterwards)")
         layout.addWidget(self._move)
 
+        self._encrypt = QCheckBox("Protect with a password…")
+        self._encrypt.toggled.connect(self._ask_password)
+        layout.addWidget(self._encrypt)
+        self._password: str | None = None
+
         self._status = QLabel("")
         self._status.setObjectName("faintLabel")
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
         self._target.textChanged.connect(self._update_status)
         self._update_status(self._target.text())
+        self._update_encrypt_state()
 
         buttons = QDialogButtonBox()
         ok = PrimaryButton("Pack")
@@ -130,6 +137,31 @@ class PackDialog(QDialog):
     def _current_ext(self) -> str:
         return self._formats[max(0, self._format.currentIndex())][1]
 
+    def _ask_password(self, on: bool) -> None:
+        """Ask for the password right away: a checkbox alone would leave the user
+        wondering when it will be asked, and an empty one would be a silent no-op."""
+        from .password_dialog import NewPasswordDialog
+
+        if not on:
+            self._password = None
+            return
+        password = NewPasswordDialog.ask(self)
+        if password:
+            self._password = password
+        else:
+            self._encrypt.setChecked(False)          # cancelled: leave it unchecked
+
+    def _update_encrypt_state(self) -> None:
+        """Only 7z can be encrypted here; the box says why when it cannot."""
+        can = am.can_encrypt(Path(self._target.text().strip() or "x.zip"))
+        self._encrypt.setEnabled(can)
+        if not can:
+            self._encrypt.setChecked(False)
+            self._password = None
+            self._encrypt.setToolTip("Only 7z archives can be encrypted")
+        else:
+            self._encrypt.setToolTip("")
+
     def _format_changed(self) -> None:
         """Swap the extension of the typed name, keep the folder and the stem."""
         current = Path(self._target.text())
@@ -150,6 +182,7 @@ class PackDialog(QDialog):
             self._target.setText(chosen)
 
     def _update_status(self, text: str) -> None:
+        self._update_encrypt_state()
         target = Path(text.strip())
         if not text.strip():
             self._status.setText("Enter the archive name.")
@@ -171,4 +204,5 @@ class PackDialog(QDialog):
             level=level,
             store_paths=self._store_paths.isChecked(),
             move_to_archive=self._move.isChecked(),
+            password=self._password if self._encrypt.isChecked() else None,
         )

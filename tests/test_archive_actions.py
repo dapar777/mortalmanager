@@ -53,6 +53,10 @@ class _Panel:
     def current_entry(self):
         return self._entries[0] if self._entries else None
 
+    def ensure_password(self, path: str) -> bool:
+        """The real panel asks the user; nothing here is encrypted."""
+        return True
+
 
 class _Host(ArchiveActionsMixin):
     """Records submitted jobs and toast messages instead of showing them."""

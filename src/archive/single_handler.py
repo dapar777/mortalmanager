@@ -81,7 +81,7 @@ class SingleFileHandler(ArchiveHandler):
         except (OSError, EOFError, lzma.LZMAError) as exc:
             raise ArchiveError(f"Damaged archive: {exc}") from exc
 
-    def list_contents(self, archive_path: Path) -> list[ArchiveEntry]:
+    def list_contents(self, archive_path: Path, password: str | None = None) -> list[ArchiveEntry]:
         data = self._read_all(archive_path)
         stat = archive_path.stat()
         return [
@@ -95,7 +95,8 @@ class SingleFileHandler(ArchiveHandler):
             )
         ]
 
-    def read_member(self, archive_path: Path, member_path: str) -> bytes:
+    def read_member(self, archive_path: Path, member_path: str,
+                    password: str | None = None) -> bytes:
         if self.normalise(member_path) != self._member_name(archive_path):
             raise ArchiveError(f"{member_path} not found in the archive")
         return self._read_all(archive_path)
@@ -105,6 +106,7 @@ class SingleFileHandler(ArchiveHandler):
         archive_path: Path,
         destination: Path,
         members: list[str] | None = None,
+        password: str | None = None,
     ) -> None:
         from .extract import safe_target
 
@@ -129,7 +131,10 @@ class SingleFileHandler(ArchiveHandler):
         sources: list[Path],
         base_dir: Path | None = None,
         level: int | None = None,
+        password: str | None = None,
     ) -> None:
+        if password:
+            raise ArchiveError("gz / bz2 / xz cannot be encrypted – use 7z for that")
         files = [s for s in sources if s.is_file()]
         if len(files) != 1 or len(sources) != 1:
             raise ArchiveError("gz / bz2 / xz can hold exactly one file – use .tar.gz instead")
@@ -141,10 +146,12 @@ class SingleFileHandler(ArchiveHandler):
         sources: list[Path],
         base_dir: Path | None = None,
         prefix: str = "",
+        password: str | None = None,
     ) -> None:
         raise ArchiveError("gz / bz2 / xz holds a single file – nothing can be added")
 
-    def write_member(self, archive_path: Path, member_path: str, data: bytes) -> None:
+    def write_member(self, archive_path: Path, member_path: str, data: bytes,
+                     password: str | None = None) -> None:
         if self.normalise(member_path) != self._member_name(archive_path):
             raise ArchiveError(f"{member_path} is not the file stored in this archive")
         self._write_all(archive_path, data)

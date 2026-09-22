@@ -104,10 +104,10 @@ def test_extract_keeps_going_after_one_bad_member(archive: Path, tmp_path: Path,
     handler = am.get_handler(archive)
     original = type(handler).read_member
 
-    def flaky(self, path, member):
+    def flaky(self, path, member, password=None):
         if member.endswith("readme.txt"):
             raise OSError("boom")
-        return original(self, path, member)
+        return original(self, path, member, password)
 
     monkeypatch.setattr(type(handler), "read_member", flaky)
     out = tmp_path / "out"

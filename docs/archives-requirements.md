@@ -57,6 +57,22 @@ editace souboru uvnitř, mazání – vše přes frontu jobů, nic blokujícího
 | C5 | „Přesunout do archivu“ smaže zdroje **až po úspěšném dokončení** | should | hotovo |
 | C6 | Existující cílový archiv: zeptat se přepsat / přidat do něj / zrušit | should | hotovo |
 
+## 4b. Hesla (zašifrované archivy)
+
+| Req | Popis | Priorita | Stav |
+|---|---|---|---|
+| P1 | Vstup do šifrovaného archivu se **zeptá na heslo** dialogem, ne chybou | must | hotovo |
+| P2 | Špatné heslo se pozná a ptá se znovu (3 pokusy), zrušení navigaci zruší | must | hotovo |
+| P3 | Heslo se pamatuje po dobu běhu programu, **nikdy se neukládá na disk** | must | hotovo |
+| P4 | Rozbalení, čtení (F3), editace (F4), přidání i mazání použijí zapamatované heslo | must | hotovo |
+| P5 | Zabalení s heslem (AES-256) u formátů, které to umí (7z); heslo se zadává dvakrát | must | hotovo |
+| P6 | Úprava šifrovaného archivu ho **nechá šifrovaný** (přebalí se se stejným heslem) | must | hotovo |
+| P7 | Formát, který šifrovat neumí, volbu hesla nenabídne; šifrovaný ZIP se nepřepisuje (stdlib neumí zapsat ZipCrypto) | must | hotovo |
+| P8 | Hesla se zapomenou při zavření okna | should | hotovo |
+
+**Podpora podle formátů:** číst šifrované umí ZIP (ZipCrypto), 7z a RAR; **vytvořit** šifrovaný umí jen 7z.
+TAR a holé gz/bz2/xz šifrování nemají vůbec.
+
 ## 5. Úpravy archivu na místě
 
 | Req | Popis | Priorita | Stav |
@@ -88,20 +104,20 @@ editace souboru uvnitř, mazání – vše přes frontu jobů, nic blokujícího
 | T1 | Jednotkové testy `tests/test_archive.py`: list/extract/create/add/delete pro zip i tar, path traversal, detekce podle obsahu | must | hotovo |
 | T2 | Testy virtuálního stromu (ploché cesty → složky, vnořená cesta, `..`) | must | hotovo |
 | T3 | Poškozený / neúplný archiv = chybová hláška, ne pád aplikace | must | hotovo |
-| T4 | Archiv chráněný heslem: ZIP i 7z se **zeptají na heslo** místo pádu (min. čitelná chyba) | should | částečně: `PasswordRequired` se hlásí jako čitelná chyba, dialog na heslo není |
+| T4 | Archiv chráněný heslem: ZIP i 7z se **zeptají na heslo** místo pádu (min. čitelná chyba) | should | hotovo |
 | T5 | Nic blokujícího na GUI vlákně – všechny operace přes job frontu nebo `QThreadPool` | must | hotovo |
 | T6 | Unicode jména a cesty s diakritikou (ZIP bez UTF-8 flagu = cp437 fallback) | should | hotovo |
 
 ## Stav
 
-Hotovo vše kromě dvou položek nižší priority:
+Hotovo vše kromě jedné položky nejnižší priority:
 
 - **B9** (vnořený archiv v archivu) – Enter na archivu uvnitř archivu ho otevře jako soubor
   (rozbalí do temp a pošle prohlížeči), do vnořeného archivu se nevstupuje.
-- **T4** (heslo) – chráněný archiv skončí čitelnou chybou `PasswordRequired`, dialog na zadání hesla chybí.
 
 Testy: `tests/test_archive.py` (vrstva), `test_archive_jobs.py` (joby), `test_archive_panel.py`
-(procházení v panelu), `test_archive_actions.py` (příkazy okna a dialog).
+(procházení v panelu), `test_archive_actions.py` (příkazy okna a dialog),
+`test_archive_password.py` (hesla).
 
 ## Pořadí prací
 

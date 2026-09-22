@@ -228,7 +228,7 @@ class JobQueue(QObject):
             work = functools.partial(
                 archive_ops.extract, archive, Path(spec.destination), members,
                 progress_cb, cancelled, opts.get("strip_prefix", ""), spec.job_id,
-                opts.get("overwrite", True),
+                opts.get("overwrite", True), opts.get("password"),
             )
         elif spec.job_type == JobType.COMPRESS:
             base = opts.get("base_dir")
@@ -237,6 +237,7 @@ class JobQueue(QObject):
                 [Path(s) for s in spec.sources], Path(base) if base else None,
                 progress_cb, cancelled, opts.get("level"),
                 opts.get("store_paths", True), opts.get("append", False), spec.job_id,
+                opts.get("password"),
             )
         elif spec.job_type == JobType.ARCHIVE_ADD:
             base = opts.get("base_dir")
@@ -244,11 +245,13 @@ class JobQueue(QObject):
                 archive_ops.add_to, Path(opts["archive"]),
                 [Path(s) for s in spec.sources], Path(base) if base else None,
                 opts.get("prefix", ""), progress_cb, cancelled, spec.job_id,
+                opts.get("password"),
             )
         else:                                    # ARCHIVE_DELETE
             work = functools.partial(
                 archive_ops.delete_from, Path(opts["archive"]),
                 list(spec.sources), progress_cb, cancelled, spec.job_id,
+                opts.get("password"),
             )
 
         files, written, errors = await loop.run_in_executor(None, work)

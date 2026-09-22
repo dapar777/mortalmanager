@@ -37,6 +37,7 @@ def extract(
     strip_prefix: str = "",
     op_id: str = "",
     overwrite: bool = True,
+    password: str | None = None,
 ) -> tuple[int, int, list[str]]:
     """Extract *members* of *archive* into *destination*.
 
@@ -52,7 +53,7 @@ def extract(
     if handler is None:
         raise am.ArchiveError(f"Unsupported archive format: {archive.name}")
 
-    entries = am.list_archive(archive)
+    entries = am.list_archive(archive, password=password)
     wanted = members_below(entries, members) if members else [e.path for e in entries]
     selected = [e for e in entries if e.path in set(wanted)]
     total_bytes = sum(e.size for e in selected if not e.is_dir)
@@ -85,7 +86,7 @@ def extract(
                 skipped += 1                            # X6: keep what is on disk
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(handler.read_member(archive, name))
+            target.write_bytes(handler.read_member(archive, name, password))
             files += 1
             done += entry.size
         except Exception as exc:
@@ -106,6 +107,7 @@ def compress(
     store_paths: bool = True,
     append: bool = False,
     op_id: str = "",
+    password: str | None = None,
 ) -> tuple[int, int, list[str]]:
     """Pack *sources* into *archive*.
 
@@ -133,9 +135,11 @@ def compress(
         return 0, 0, ["Cancelled"]
     try:
         if append and archive.exists():
-            handler.add_files(archive, sources, root)
+            handler.add_files(archive, sources, root, password=password)
         else:
-            handler.create(archive, sources, root, level)
+            handler.create(archive, sources, root, level, password)
+            if password:
+                am.remember_password(archive, password)
     except Exception as exc:
         logger.exception("Compressing into %s failed", archive)
         raise am.ArchiveError(str(exc)) from exc
@@ -158,6 +162,7 @@ def add_to(
     progress: ProgressCb | None = None,
     cancelled: Cancelled = _noop,
     op_id: str = "",
+    password: str | None = None,
 ) -> tuple[int, int, list[str]]:
     """Add files into an open archive, under *prefix* (E1)."""
     files = list(ArchiveHandler.walk_sources(sources))
@@ -168,7 +173,7 @@ def add_to(
             current_file=files[0].name, bytes_done=0, bytes_total=total,
             files_done=0, files_total=len(files),
         ))
-    am.add_to_archive(archive, sources, base_dir, prefix)
+    am.add_to_archive(archive, sources, base_dir, prefix, password)
     return len(files), total, []
 
 
@@ -178,6 +183,7 @@ def delete_from(
     progress: ProgressCb | None = None,
     cancelled: Cancelled = _noop,
     op_id: str = "",
+    password: str | None = None,
 ) -> tuple[int, int, list[str]]:
     """Delete members from an archive (E2)."""
     if progress is not None:
@@ -186,7 +192,7 @@ def delete_from(
             current_file=Path(members[0]).name if members else "",
             files_done=0, files_total=len(members),
         ))
-    am.delete_from_archive(archive, members)
+    am.delete_from_archive(archive, members, password)
     return len(members), 0, []
 
 

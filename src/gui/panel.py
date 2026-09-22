@@ -336,6 +336,7 @@ class PanelWidget(QFrame):
         self._generation = 0
         self._loading = False
         self._location = None      # ArchiveLocation while browsing inside an archive
+        self._session_password = None   # password not kept by the manager (user said no)
         self._temp = None          # gui.archive_browse.TempExtracts, created on demand
         self._vcs = _VcsInfo()
         self._load_signals = _LoadSignals(self)
@@ -798,15 +799,55 @@ class PanelWidget(QFrame):
             self.entry_activated.emit(entry)
 
     def enter_archive(self, path: str) -> bool:
-        """Step into *path* if it is an archive (Enter, Ctrl+PgDn). False otherwise."""
+        """Step into *path* if it is an archive (Enter, Ctrl+PgDn). False otherwise.
+
+        An encrypted archive asks for its password first, so the listing and every
+        later read already have it (it is kept in memory for this session only).
+        """
         from src.archive import archive_manager as am
 
         if not am.looks_like_archive(path):
             return False
         if am.get_handler(Path(path)) is None:
             return False
+        if not self.ensure_password(path):
+            return False
         self._navigate_to(path)
         return True
+
+    def ensure_password(self, path: str) -> bool:
+        """Make sure an encrypted archive has a working password; ask if needed.
+
+        False when the user cancelled – the caller must not continue then.
+        """
+        from src.archive import archive_manager as am
+        from .dialogs.password_dialog import PasswordDialog
+
+        p = Path(path)
+        if not am.needs_password(p):
+            return True
+        known = am.known_password(p)
+        if known and am.verify_password(p, known):
+            return True
+        if not am.supports_password(p):
+            from src.solarqt.widgets import Toast
+            Toast.show_message(
+                self.window(), f"{p.name} is encrypted and this format cannot be decrypted",
+                "warning")
+            return False
+        retry = False
+        for _ in range(3):
+            password, remember = PasswordDialog.ask(p, self.window(), retry=retry)
+            if password is None:
+                return False
+            if am.verify_password(p, password):
+                am.remember_password(p, password if remember else None)
+                if not remember:
+                    self._session_password = password
+                am.invalidate(p)
+                return True
+            retry = True
+        return False
 
     @property
     def archive_location(self):

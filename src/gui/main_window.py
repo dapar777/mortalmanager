@@ -1577,5 +1577,7 @@ class MainWindow(ArchiveActionsMixin, QMainWindow):
         self._terminal.shutdown()
         self._left_panel.cleanup_temp()          # E6: archive members opened by F3 / F4
         self._right_panel.cleanup_temp()
+        from src.archive import archive_manager as am
+        am.forget_passwords()                    # archive passwords live in memory only
         self._job_queue.deleteLater()
         event.accept()

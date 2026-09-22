@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from .base import ArchiveEntry, ArchiveError, ArchiveHandler, PasswordRequired
+from .base import ArchiveEntry, ArchiveError, ArchiveHandler, PasswordRequired, WrongPassword
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ class RarHandler(ArchiveHandler):
 
     writable = False
     creatable = False
+    supports_password = True        # rarfile decrypts when given a password
+    can_encrypt = False
 
     @property
     def format_name(self) -> str:
@@ -43,21 +45,36 @@ class RarHandler(ArchiveHandler):
         except Exception:
             return False
 
-    def _open(self, archive_path: Path):
+    def needs_password(self, archive_path: Path) -> bool:
+        if not _HAS_RARFILE:
+            return False
+        try:
+            with rarfile.RarFile(str(archive_path)) as rf:
+                return bool(rf.needs_password())
+        except Exception:
+            return True
+
+    def _open(self, archive_path: Path, password: str | None = None):
         if not _HAS_RARFILE:
             raise ArchiveError("RAR support needs the rarfile package and an unrar tool")
         try:
-            return rarfile.RarFile(str(archive_path))
+            return rarfile.RarFile(str(archive_path), pwd=password or None)
         except rarfile.PasswordRequired as exc:                     # type: ignore[attr-defined]
+            if password:
+                raise WrongPassword(f"Wrong password for {archive_path.name}") from exc
             raise PasswordRequired(f"{archive_path.name} is password protected") from exc
+        except rarfile.BadRarFile as exc:                           # type: ignore[attr-defined]
+            if password:
+                raise WrongPassword(f"Wrong password for {archive_path.name}") from exc
+            raise ArchiveError(f"Cannot open RAR archive: {exc}") from exc
         except rarfile.NeedFirstVolume as exc:                      # type: ignore[attr-defined]
             raise ArchiveError("This is not the first volume of the archive") from exc
         except rarfile.Error as exc:
             raise ArchiveError(f"Cannot open RAR archive: {exc}") from exc
 
-    def list_contents(self, archive_path: Path) -> list[ArchiveEntry]:
+    def list_contents(self, archive_path: Path, password: str | None = None) -> list[ArchiveEntry]:
         entries: list[ArchiveEntry] = []
-        with self._open(archive_path) as rf:
+        with self._open(archive_path, password) as rf:
             for info in rf.infolist():
                 name = self.normalise(info.filename)
                 if not name:
@@ -76,9 +93,10 @@ class RarHandler(ArchiveHandler):
                 )
         return entries
 
-    def read_member(self, archive_path: Path, member_path: str) -> bytes:
+    def read_member(self, archive_path: Path, member_path: str,
+                    password: str | None = None) -> bytes:
         wanted = self.normalise(member_path)
-        with self._open(archive_path) as rf:
+        with self._open(archive_path, password) as rf:
             for info in rf.infolist():
                 if self.normalise(info.filename) == wanted:
                     return rf.read(info)
@@ -89,10 +107,11 @@ class RarHandler(ArchiveHandler):
         archive_path: Path,
         destination: Path,
         members: list[str] | None = None,
+        password: str | None = None,
     ) -> None:
         from .extract import safe_target
 
-        with self._open(archive_path) as rf:
+        with self._open(archive_path, password) as rf:
             for info in rf.infolist():
                 name = self.normalise(info.filename)
                 if not name or (members is not None and not self.is_below(name, members)):
@@ -109,9 +128,11 @@ class RarHandler(ArchiveHandler):
                         dst.write(chunk)
 
     def create(self, archive_path: Path, sources: list[Path],
-               base_dir: Path | None = None, level: int | None = None) -> None:
+               base_dir: Path | None = None, level: int | None = None,
+               password: str | None = None) -> None:
         raise ArchiveError("RAR archives cannot be created")
 
     def add_files(self, archive_path: Path, sources: list[Path],
-                  base_dir: Path | None = None, prefix: str = "") -> None:
+                  base_dir: Path | None = None, prefix: str = "",
+                  password: str | None = None) -> None:
         raise ArchiveError("RAR archives cannot be modified")

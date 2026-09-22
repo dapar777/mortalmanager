@@ -289,9 +289,9 @@ def test_listing_is_cached_until_the_archive_changes(archive: Path, tmp_path: Pa
     handler = am.get_handler(archive)
     original = type(handler).list_contents
 
-    def counted(self, path):
+    def counted(self, path, password=None):
         calls.append(path)
-        return original(self, path)
+        return original(self, path, password)
 
     monkeypatch.setattr(type(handler), "list_contents", counted)
     am.list_archive(archive)

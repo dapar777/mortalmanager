@@ -82,7 +82,12 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   (magic bytes, ne přípony; `looks_like_archive` předfiltruje podle jména, ať se nečuchá k velkým .iso),
   cachuje výpis podle (cesta, mtime, velikost) a **každý zápis cache zneplatní** (`invalidate`).
   `extract.py` `safe_target` zahodí položky mimo cíl (`..`, absolutní cesta, `C:`) – bez toho by archiv mohl
-  přepsat cokoli. `vfs.py` = `ArchiveLocation` (archiv + cesta uvnitř), `split_archive_path` rozdělí
+  přepsat cokoli. **Hesla**: každá operace bere `password`; `needs_password` řekne, jestli je archiv šifrovaný,
+  `supports_password` / `can_encrypt` co formát umí (číst umí zip/7z/rar, **šifrovat jen 7z** – stdlib `zipfile`
+  ZipCrypto dešifruje, ale nezašifruje, proto se přepis šifrovaného ZIPu odmítne místo tichého odšifrování).
+  Chyby: `PasswordRequired` (heslo chybí) a `WrongPassword` (heslo nesedí) – py7zr obojí ohlásí až u dat, ne
+  při otevření, `_decrypt_error` je mapuje. Zadaná hesla drží `remember_password` **jen v paměti procesu**
+  (nikdy do DB), `verify_password` je ověří přečtením nejmenšího členu, `forget_passwords` maže při zavření okna. `vfs.py` = `ArchiveLocation` (archiv + cesta uvnitř), `split_archive_path` rozdělí
   `C:\a\x.zip\docs` zprava na soubor a vnitřek, `listdir` **dopočítá chybějící složky** (archiv ukládá ploché cesty).
 - **`database/`** — `DatabaseManager` nad SQLite v `%APPDATA%\UltimateCommander` (`config._migrate_data_dir` při prvním startu přejmenuje starou složku `MortalManager`; nastavení, záložky, oblíbené, FTP
   relace, historie příkazů a cest, historie operací, taby). **`settings/ConfigManager`** je singleton
@@ -144,7 +149,10 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   kontextové menu (`_show_archive_context_menu`, žádné shell menu / terminál / VCS), nejde z něj táhnout ven
   (`can_drag_out` → `FileTableView.drag_allowed`) ani přejmenovávat. Soubory pro F3/F4 rozbaluje
   `archive_browse.TempExtracts` do dočasné složky, `save_back` je po editaci zapíše zpět
-  (`MainWindow._save_archive_member` se zeptá), `cleanup_temp` maže při zavření okna. `FileTableModel` bere barvy z `_Look` (cache per téma),
+  (`MainWindow._save_archive_member` se zeptá), `cleanup_temp` maže při zavření okna.
+  **Šifrovaný archiv**: `PanelWidget.ensure_password` se před vstupem zeptá dialogem
+  `dialogs/password_dialog.py` (tři pokusy, špatné heslo hlásí varováním), ověří ho a uloží do paměti, takže
+  další čtení už se neptá; zrušení dialogu navigaci zruší. Joby dostanou heslo v `options["password"]`. `FileTableModel` bere barvy z `_Look` (cache per téma),
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
   úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). Ctrl+S nebo `*` (hlavní klávesnice; numerická `*` zůstává výběr) = rychlý filtr jako v TC: pole pod seznamem,
@@ -173,8 +181,10 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
 - **archivy v GUI** — `gui/archive_actions.py` `ArchiveActionsMixin` (namíchaný do `MainWindow`) = zabalit
-  (`_pack_files`, Alt+F5, dialog `dialogs/pack_dialog.py`: formát, úroveň, ukládat cesty, přesunout do archivu),
-  rozbalit (`_extract_here` / `_extract_to_subfolder` / `_extract_to` Alt+F9 / `_extract_to_other_panel` F5),
+  (`_pack_files`, Alt+F5, dialog `dialogs/pack_dialog.py`: formát, úroveň, ukládat cesty, přesunout do archivu
+  a heslo – volba je aktivní jen u 7z, heslo se zadává dvakrát),
+  rozbalit (`_extract_here` / `_extract_to_subfolder` / `_extract_to` Alt+F9 / `_extract_to_other_panel` F5;
+  u šifrovaného archivu si `_submit_extract` napřed vyžádá heslo),
   `_archive_add` / `_archive_delete`, F3/F4 nad členem (`_open_archive_member`). F5/F8/F3/F4 v `MainWindow`
   se uvnitř archivu rozdvojí, `_transfer` s cílem v otevřeném archivu se změní na ARCHIVE_ADD (Ctrl+V i drop).
   „Přesunout do archivu“ smaže zdroje **až po úspěšném COMPRESS** v `_on_job_finished`, které také zneplatní cache.

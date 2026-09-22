@@ -7,6 +7,10 @@ always use ``/`` separators and never start with one.
 Writing into an existing archive must never leave a half-written file behind,
 so handlers that rebuild an archive (delete, replace) write a temporary file
 next to the original and ``os.replace`` it at the end – see ``rebuilt_archive``.
+
+Encrypted archives take a ``password`` on every read; a handler that cannot use
+one raises ``PasswordRequired`` so the GUI can ask and retry. ``needs_password``
+answers, without a password, whether the archive is encrypted at all.
 """
 
 from __future__ import annotations
@@ -38,7 +42,11 @@ class ArchiveError(Exception):
 
 
 class PasswordRequired(ArchiveError):
-    """The archive (or this member) is encrypted and needs a password."""
+    """The archive (or this member) is encrypted and no password was given."""
+
+
+class WrongPassword(PasswordRequired):
+    """A password was given but it does not open the archive."""
 
 
 class ArchiveHandler(ABC):
@@ -48,6 +56,10 @@ class ArchiveHandler(ABC):
     writable: bool = False
     #: can a new archive of this format be created?
     creatable: bool = False
+    #: can this format read encrypted archives when given a password?
+    supports_password: bool = False
+    #: can a *new* archive be encrypted with a password?
+    can_encrypt: bool = False
 
     @property
     @abstractmethod
@@ -67,8 +79,13 @@ class ArchiveHandler(ABC):
         """True if this handler can open *path*. Decided by content (magic bytes)
         wherever the library allows it, so a renamed archive is still recognised."""
 
+    def needs_password(self, archive_path: Path) -> bool:
+        """True if the archive is encrypted (its *content*, not necessarily its
+        names – a ZIP lists fine without a password, 7z may not)."""
+        return False
+
     @abstractmethod
-    def list_contents(self, archive_path: Path) -> list[ArchiveEntry]:
+    def list_contents(self, archive_path: Path, password: str | None = None) -> list[ArchiveEntry]:
         """Every entry inside the archive."""
 
     @abstractmethod
@@ -77,6 +94,7 @@ class ArchiveHandler(ABC):
         archive_path: Path,
         destination: Path,
         members: list[str] | None = None,
+        password: str | None = None,
     ) -> None:
         """Extract *members* (or everything) into *destination*."""
 
@@ -87,6 +105,7 @@ class ArchiveHandler(ABC):
         sources: list[Path],
         base_dir: Path | None = None,
         level: int | None = None,
+        password: str | None = None,
     ) -> None:
         """Create a new archive from *sources* (directories go in recursively).
 
@@ -101,18 +120,22 @@ class ArchiveHandler(ABC):
         sources: list[Path],
         base_dir: Path | None = None,
         prefix: str = "",
+        password: str | None = None,
     ) -> None:
         """Add *sources* to an existing archive under *prefix* (a path inside it)."""
 
-    def delete_members(self, archive_path: Path, members: list[str]) -> None:
+    def delete_members(self, archive_path: Path, members: list[str],
+                       password: str | None = None) -> None:
         """Remove *members* (and everything below a directory member)."""
         raise ArchiveError(f"{self.format_name} archives cannot be modified")
 
-    def read_member(self, archive_path: Path, member_path: str) -> bytes:
+    def read_member(self, archive_path: Path, member_path: str,
+                    password: str | None = None) -> bytes:
         """Read one member as bytes."""
         raise ArchiveError(f"{self.format_name} member reading is not supported")
 
-    def write_member(self, archive_path: Path, member_path: str, data: bytes) -> None:
+    def write_member(self, archive_path: Path, member_path: str, data: bytes,
+                     password: str | None = None) -> None:
         """Replace (or add) one member with *data* – used by the F4 editor."""
         raise ArchiveError(f"{self.format_name} archives cannot be modified")
 
