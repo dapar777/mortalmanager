@@ -262,6 +262,18 @@ class _LoadWorker(QRunnable):
             pass
 
     def _run(self) -> None:
+        from src.gui.archive_browse import list_location, location_of
+
+        location = location_of(self._path)
+        if location is not None:
+            # inside an archive: no filesystem listing and no VCS status
+            try:
+                self._signals.listed.emit(self._gen, list_location(location))
+            except KeyError:
+                self._signals.failed.emit(self._gen, f"{location.inner} is not in the archive")
+            except Exception as exc:
+                self._signals.failed.emit(self._gen, str(exc))
+            return
         try:
             entries = self._fs.list_directory_sync(self._path, show_hidden=self._show_hidden)
         except Exception as exc:
@@ -323,6 +335,8 @@ class PanelWidget(QFrame):
         self._current_tab_index = -1
         self._generation = 0
         self._loading = False
+        self._location = None      # ArchiveLocation while browsing inside an archive
+        self._temp = None          # gui.archive_browse.TempExtracts, created on demand
         self._vcs = _VcsInfo()
         self._load_signals = _LoadSignals(self)
         self._load_signals.listed.connect(self._on_listed)
@@ -519,13 +533,21 @@ class PanelWidget(QFrame):
         self._navigate_to(path, push_history=True)
 
     def _navigate_to(self, path: str, push_history: bool = True) -> None:
+        from src.gui.archive_browse import location_of
+
         try:
             resolved = str(Path(path).resolve())
         except OSError:
             return
+        location = None
         if not Path(resolved).is_dir():
-            self._flash_path_invalid()
-            return
+            # a path leading through an archive file is a directory for us (B1, B2)
+            location = location_of(resolved)
+            if location is None:
+                self._flash_path_invalid()
+                return
+            resolved = str(location)
+        self._location = location
         tab = self._current_tab
         previous = tab.path
         if push_history:
@@ -554,8 +576,9 @@ class PanelWidget(QFrame):
         self._tab_bar.setTabToolTip(self._current_tab_index, resolved)
         self._btn_back.setEnabled(tab.history.can_go_back)
         self._btn_forward.setEnabled(tab.history.can_go_forward)
-        self._btn_up.setEnabled(self._fs.get_parent(resolved) is not None)
-        self._watcher.watch(resolved)
+        self._btn_up.setEnabled(
+            location is not None or self._fs.get_parent(resolved) is not None)
+        self._watcher.watch(str(location.archive.parent) if location is not None else resolved)
         self._load_directory(resolved)
         self.path_changed.emit(resolved)
         if push_history and resolved != previous:
@@ -647,6 +670,10 @@ class PanelWidget(QFrame):
         sel_count = self._current_tab.selection.count
         sel_size = self._current_tab.selection.total_size(entries)
         info = f"{dirs} folders, {files} files ({format_size(total) or '0 B'})"
+        if self._location is not None:
+            from src.archive import archive_manager as am
+            fmt = am.format_name(self._location.archive) or "archive"
+            info = f"[{fmt}] {self._location.archive.name}  ·  " + info
         if self._current_tab.filter_text:
             all_count = sum(1 for e in getattr(self, "_unfiltered", []) if not e.is_parent)
             info = f"Filter „{self._current_tab.filter_text}“: {dirs + files} of {all_count}  ·  " + info
@@ -672,6 +699,17 @@ class PanelWidget(QFrame):
             self._navigate_to(entry.path, push_history=False)
 
     def _go_up(self) -> None:
+        if self._location is not None:
+            up = self._location.parent()
+            archive = self._location.archive
+            if up is None:                      # archive root -> the folder holding it
+                self._pending_cursor = archive.name
+                self._navigate_to(str(archive.parent), push_history=True)
+            else:
+                name = self._location.inner.rsplit("/", 1)[-1]
+                self._pending_cursor = name
+                self._navigate_to(str(up), push_history=True)
+            return
         parent = self._fs.get_parent(self.current_path)
         if parent:
             current_name = Path(self.current_path).name
@@ -752,8 +790,45 @@ class PanelWidget(QFrame):
             self._go_up()
         elif entry.is_dir:
             self._navigate_to(entry.full_path)
+        elif self._location is not None:
+            self.entry_activated.emit(entry)        # a file inside an archive: viewer / editor
+        elif self.enter_archive(entry.full_path):
+            return
         else:
             self.entry_activated.emit(entry)
+
+    def enter_archive(self, path: str) -> bool:
+        """Step into *path* if it is an archive (Enter, Ctrl+PgDn). False otherwise."""
+        from src.archive import archive_manager as am
+
+        if not am.looks_like_archive(path):
+            return False
+        if am.get_handler(Path(path)) is None:
+            return False
+        self._navigate_to(path)
+        return True
+
+    @property
+    def archive_location(self):
+        """ArchiveLocation when the panel is inside an archive, else None."""
+        return self._location
+
+    @property
+    def in_archive(self) -> bool:
+        return self._location is not None
+
+    def temp_extracts(self):
+        """Lazily created temp area for members opened by F3 / F4."""
+        from src.gui.archive_browse import TempExtracts
+
+        if self._temp is None:
+            self._temp = TempExtracts()
+        return self._temp
+
+    def cleanup_temp(self) -> None:
+        if self._temp is not None:
+            self._temp.cleanup()
+            self._temp = None
 
     def _toggle_selection(self, entry: FileEntry) -> None:
         if entry.is_parent:
@@ -978,6 +1053,9 @@ class PanelWidget(QFrame):
         entries = self.selected_entries()
         paths = [e.full_path for e in entries if not e.is_parent]
         mw = self.window()
+        if self._location is not None:
+            self._show_archive_context_menu(entries, _pos)
+            return
 
         def act(menu: QMenu, text: str, icon_name: str | None, handler) -> None:
             a = menu.addAction(icons.icon(icon_name), text) if icon_name else menu.addAction(text)
@@ -1054,10 +1132,14 @@ class PanelWidget(QFrame):
             act(menu, "&Properties\tAlt+Enter", "info", mw._show_properties)
         menu.addSeparator()
 
-        archive_exts = {"zip", "7z", "tar", "gz", "bz2", "xz", "rar"}
-        if is_single and ext in archive_exts:
-            act(menu, "E&xtract Here", "archive", lambda: self._extract_here(first))
-        act(menu, "Compress to &ZIP…", "archive", lambda: self._compress_to_zip(paths))
+        from src.archive import archive_manager as am
+
+        if is_single and not is_dir and am.looks_like_archive(first)                 and am.get_handler(Path(first)) is not None:
+            act(menu, "&Open archive	Ctrl+PgDn", "archive", lambda: self.enter_archive(first))
+            act(menu, "E&xtract Here", "archive", lambda: mw._extract_here(first))
+            act(menu, "Extract to &subfolder", "archive", lambda: mw._extract_to_subfolder(first))
+        if hasattr(mw, "_pack_files"):
+            act(menu, "&Pack files…	Alt+F5", "archive", mw._pack_files)
         menu.addSeparator()
 
         self._populate_windows_shell_menu(menu, paths)
@@ -1275,6 +1357,50 @@ class PanelWidget(QFrame):
                 inserted = True
         return inserted
 
+    def _show_archive_context_menu(self, entries: list[FileEntry], pos: object) -> None:
+        """Context menu inside an archive: only what an archive can do (I5).
+
+        No Windows shell menu, no terminal and no VCS – none of them can reach a
+        file that exists only inside the archive.
+        """
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QMenu
+
+        from src.archive import archive_manager as am
+
+        location = self._location
+        mw = self.window()
+        menu = QMenu(self)
+        gp = (self._table.viewport().mapToGlobal(pos)
+              if isinstance(pos, QPoint) and pos.x() >= 0 else QCursor.pos())
+        real = [e for e in entries if not e.is_parent]
+        writable = am.is_writable(location.archive)
+
+        def act(text: str, icon_name: str, handler, enabled: bool = True) -> None:
+            a = menu.addAction(icons.icon(icon_name), text)
+            a.triggered.connect(handler)
+            a.setEnabled(enabled)
+
+        if real and len(real) == 1 and not real[0].is_dir:
+            act("&View	F3", "eye", lambda: mw._open_archive_member(real[0], edit=False))
+            act("&Edit	F4", "edit", lambda: mw._open_archive_member(real[0], edit=True),
+                enabled=writable)
+            menu.addSeparator()
+        if real:
+            act("E&xtract to the other panel	F5", "archive", mw._extract_to_other_panel)
+        act("Extract &all here", "archive", mw._extract_here)
+        act("Extract to…	Alt+F9", "archive", mw._extract_to)
+        menu.addSeparator()
+        if real:
+            act("&Delete from archive	F8", "trash", mw._archive_delete, enabled=writable)
+        act("&Refresh	Ctrl+R", "refresh", self.refresh)
+        act("&Close archive", "arrow_up", self._go_up)
+        if not writable:
+            note = menu.addAction(f"{am.format_name(location.archive)} is read-only")
+            note.setEnabled(False)
+        fit_menu_on_screen(menu, gp)
+
     # shell verbs duplicated by our own items (open, delete, rename, copy path)
     _SHELL_VERBS_SKIPPED = {"open", "delete", "rename", "copyaspath"}
 
@@ -1382,6 +1508,10 @@ class PanelWidget(QFrame):
             except Exception:
                 pass
 
+    def can_drag_out(self) -> bool:
+        """False inside an archive: its members are not files Explorer could take (I5)."""
+        return self._location is None
+
     def _open_terminal_here(self) -> None:
         try:
             subprocess.Popen(
@@ -1391,43 +1521,6 @@ class PanelWidget(QFrame):
             )
         except Exception:
             pass
-
-    def _extract_here(self, path: str) -> None:
-        try:
-            import zipfile
-            with zipfile.ZipFile(path, 'r') as zf:
-                zf.extractall(str(Path(path).parent))
-            QTimer.singleShot(500, self.refresh)
-        except Exception as exc:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Extract", str(exc))
-
-    def _compress_to_zip(self, paths: list[str]) -> None:
-        if not paths:
-            return
-        from PySide6.QtWidgets import QFileDialog
-        parent_dir = str(Path(paths[0]).parent)
-        default = (Path(paths[0]).stem + ".zip") if len(paths) == 1 else "archive.zip"
-        out, _ = QFileDialog.getSaveFileName(
-            self, "Save ZIP", str(Path(parent_dir) / default), "ZIP files (*.zip)"
-        )
-        if not out:
-            return
-        try:
-            import zipfile
-            with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for p in paths:
-                    fp = Path(p)
-                    if fp.is_file():
-                        zf.write(p, fp.name)
-                    elif fp.is_dir():
-                        for child in fp.rglob('*'):
-                            if child.is_file():
-                                zf.write(str(child), str(child.relative_to(fp.parent)))
-            QTimer.singleShot(500, self.refresh)
-        except Exception as exc:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Compress", str(exc))
 
     def _show_windows_shell_menu(self, paths: list[str], pos: object) -> None:
         """Display the native Windows Shell context menu for the selected paths."""

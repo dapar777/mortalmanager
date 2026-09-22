@@ -547,6 +547,13 @@ class FileTableView(QTableView):
         cur = self.current_entry()
         return [cur.full_path] if cur is not None and not cur.is_parent else []
 
+    def drag_allowed(self) -> bool:
+        """The panel vetoes dragging out while it browses an archive."""
+        panel = self.parent()
+        while panel is not None and not hasattr(panel, "can_drag_out"):
+            panel = panel.parent()
+        return panel is None or panel.can_drag_out()
+
     def make_drag(self) -> QDrag | None:
         """QDrag carrying drag_paths() as file URLs (shared by mouse and keyboard drags)."""
         paths = self.drag_paths()
@@ -563,6 +570,8 @@ class FileTableView(QTableView):
         return drag
 
     def startDrag(self, supported_actions) -> None:  # noqa: N802
+        if not self.drag_allowed():
+            return                      # inside an archive there is nothing to hand out (I5)
         drag = self.make_drag()
         if drag is None:
             return

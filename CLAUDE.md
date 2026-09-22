@@ -70,7 +70,20 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   přes `MainWindow._submit` (eviduje spec podle job_id); fronta hlásí `job_started / job_progress(job_id,
   OperationProgress) / job_finished(job_id, JobResult) / job_failed`, `MainWindow` po dokončení obnoví oba panely
   a ukáže `Toast`. `JobResult.undo_pairs` krmí `UndoManager`. Cokoli blokujícího musí jít touto cestou.
-- **`archive/`** — `ArchiveHandler` (ABC) + zip/tar/7z handlery za `ArchiveManager`.
+  Archivní joby (`EXTRACT`, `COMPRESS`, `ARCHIVE_ADD`, `ARCHIVE_DELETE`) dělá `jobs/archive_ops.py`
+  v **executoru** (knihovny jsou synchronní), hlásí průběh po souborech a `cancelled()` se čte mezi členy;
+  chyba jedné položky job nezruší, sesbírá se do `JobResult.errors`.
+- **`archive/`** — archivy jako složky (jako v Total Commanderu; požadavky v `docs/archives-requirements.md`).
+  `base.py` `ArchiveHandler` (ABC, `writable`/`creatable`, `rebuilt_archive` = zápis do `.uc-tmp` vedle originálu
+  a `os.replace` **až po zavření obou archivů** – Windows otevřený soubor nepřepíše, proto `_rebuild` drží
+  `with rebuilt_archive(...)` **vně** otevřeného zdroje), handlery `zip` (plný zápis), `tar` (+gz/bz2/xz;
+  komprimovaný tar se při zápisu přestaví celý), `sevenzip` (py7zr, volitelné), `rar` (jen čtení,
+  `writable=False`), `single` (holé .gz/.bz2/.xz = jeden člen). `archive_manager.py` pozná formát **podle obsahu**
+  (magic bytes, ne přípony; `looks_like_archive` předfiltruje podle jména, ať se nečuchá k velkým .iso),
+  cachuje výpis podle (cesta, mtime, velikost) a **každý zápis cache zneplatní** (`invalidate`).
+  `extract.py` `safe_target` zahodí položky mimo cíl (`..`, absolutní cesta, `C:`) – bez toho by archiv mohl
+  přepsat cokoli. `vfs.py` = `ArchiveLocation` (archiv + cesta uvnitř), `split_archive_path` rozdělí
+  `C:\a\x.zip\docs` zprava na soubor a vnitřek, `listdir` **dopočítá chybějící složky** (archiv ukládá ploché cesty).
 - **`database/`** — `DatabaseManager` nad SQLite v `%APPDATA%\UltimateCommander` (`config._migrate_data_dir` při prvním startu přejmenuje starou složku `MortalManager`; nastavení, záložky, oblíbené, FTP
   relace, historie příkazů a cest, historie operací, taby). **`settings/ConfigManager`** je singleton
   (`get_instance()`) s dataclassami `AppConfig` (mj. `theme`, `zoom`) / `PanelConfig`.
@@ -123,7 +136,15 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `_VcsInfo` s cache na kořen repa (nikdy subprocess z GUI vlákna). Zápis do DB historie cest jde přes
   `_CallWorker` mimo GUI vlákno a jen při uživatelské navigaci (refresh ne). Signály ven: `path_changed`, `entry_activated(FileEntry)` (jen soubory; `MainWindow._on_entry_open`: `.lnk` na složku = `navigate_to` cíle (`filesystem/shortcut.py`, IShellLink), `_EXEC_EXTENSIONS` se spustí
   přes `_run_file` – bat/cmd v novém okně `cmd /K`, ps1 přes `powershell -NoExit -File` –, text/obrázky do prohlížeče, zbytek `os.startfile`),
-  `status_info`, `request_focus`, `favorites_requested`. `FileTableModel` bere barvy z `_Look` (cache per téma),
+  `status_info`, `request_focus`, `favorites_requested`.
+  **Archiv se prochází jako složka**: `_navigate_to` cestu, která není složka, zkusí přes
+  `gui/archive_browse.location_of`; uspěje-li, panel si drží `_location` (`ArchiveLocation`), `_LoadWorker`
+  místo disku vypíše `list_location` (bez VCS) a `_go_up` jde o úroveň výš uvnitř archivu, z kořene ven na disk
+  **s kurzorem na archivu**. Enter / Ctrl+PgDn na archivu = `enter_archive`. Uvnitř archivu má panel vlastní
+  kontextové menu (`_show_archive_context_menu`, žádné shell menu / terminál / VCS), nejde z něj táhnout ven
+  (`can_drag_out` → `FileTableView.drag_allowed`) ani přejmenovávat. Soubory pro F3/F4 rozbaluje
+  `archive_browse.TempExtracts` do dočasné složky, `save_back` je po editaci zapíše zpět
+  (`MainWindow._save_archive_member` se zeptá), `cleanup_temp` maže při zavření okna. `FileTableModel` bere barvy z `_Look` (cache per téma),
   shell ikony cachuje per přípona (per soubor jen exe/lnk/ico/url…), VCS stav kreslí jako sémantickou tečku.
   Označené soubory = akcent (`semantic_fg["accent"]` + tint), kurzor = `selection`. Sloupce Attr → Date se při
   úzkém panelu schovají (`_fit_columns`). Alt+Down = `show_history_menu` (historie tabu + DB path history). Ctrl+S nebo `*` (hlavní klávesnice; numerická `*` zůstává výběr) = rychlý filtr jako v TC: pole pod seznamem,
@@ -151,6 +172,12 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
   settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
+- **archivy v GUI** — `gui/archive_actions.py` `ArchiveActionsMixin` (namíchaný do `MainWindow`) = zabalit
+  (`_pack_files`, Alt+F5, dialog `dialogs/pack_dialog.py`: formát, úroveň, ukládat cesty, přesunout do archivu),
+  rozbalit (`_extract_here` / `_extract_to_subfolder` / `_extract_to` Alt+F9 / `_extract_to_other_panel` F5),
+  `_archive_add` / `_archive_delete`, F3/F4 nad členem (`_open_archive_member`). F5/F8/F3/F4 v `MainWindow`
+  se uvnitř archivu rozdvojí, `_transfer` s cílem v otevřeném archivu se změní na ARCHIVE_ADD (Ctrl+V i drop).
+  „Přesunout do archivu“ smaže zdroje **až po úspěšném COMPRESS** v `_on_job_finished`, které také zneplatní cache.
 - **`viewer/`, `editor/`** — samostatná okna pro F3/F4; F4 nejdřív zkusí externí editor (`AppConfig.external_editor`,
   výchozí `code -n`, uložené holé `code` se při načtení povýší; `editor/external.py`: tokenizace s uvozovkami, `{file}` = cesty, `code` → `Code.exe` místo
   `code.cmd`, nenalezený program = Toast + vestavěný editor; dialog `dialogs/editor_dialog.py`); mono písmo `theme.mono_font()`, zvýraznění syntaxe

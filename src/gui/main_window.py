@@ -43,16 +43,22 @@ from src.jobs.job_queue import JobQueue
 from src.settings.config import ConfigManager
 from src.solarqt import icons, theme, widgets
 from src.solarqt.widgets import ActionButton, IconButton, Toast, VLine
+from .archive_actions import ArchiveActionsMixin
 from .drive_bar import DriveBar
 from .index_service import IndexService
 from .panel import PanelWidget
 
 logger = logging.getLogger(__name__)
 
+#: jobs whose result changes an archive file
+_ARCHIVE_JOB_TYPES = frozenset({
+    JobType.COMPRESS, JobType.ARCHIVE_ADD, JobType.ARCHIVE_DELETE,
+})
+
 _ASSETS = Path(__file__).resolve().parent.parent.parent / "assets" / "icons"
 
 
-class MainWindow(QMainWindow):
+class MainWindow(ArchiveActionsMixin, QMainWindow):
     """The main dual-pane file manager window."""
 
     zoom_changed = Signal(float)
@@ -319,6 +325,14 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("E&xit\tAlt+F4", self.close)
 
+        archive_menu = mb.addMenu("&Archive")
+        archive_menu.addAction(icons.icon("archive"), "&Pack Files…	Alt+F5", self._pack_files)
+        archive_menu.addSeparator()
+        archive_menu.addAction(icons.icon("archive"), "&Open Archive	Ctrl+PgDn", self._enter_archive)
+        archive_menu.addAction(icons.icon("archive"), "Extract &Here", self._extract_here)
+        archive_menu.addAction(icons.icon("archive"), "Extract to &Subfolder", self._extract_to_subfolder)
+        archive_menu.addAction(icons.icon("archive"), "Extract &To…	Alt+F9", self._extract_to)
+
         mark_menu = mb.addMenu("&Mark")
         mark_menu.addAction("&Toggle Mark\tIns / Space", self._toggle_mark)
         mark_menu.addAction("Select &All\tCtrl+A / Num+*", self._active_panel_widget_select_all)
@@ -414,6 +428,10 @@ class MainWindow(QMainWindow):
             ("Ctrl+Shift+C", self._copy_names),
             ("Ctrl+Alt+C",  self._copy_paths),
             ("Alt+Down",    lambda: self._active_panel_widget.show_history_menu()),
+            ("Alt+F5",      self._pack_files),
+            ("Alt+F9",      self._extract_to),
+            ("Ctrl+PgDown", self._enter_archive),
+            ("Ctrl+PgUp",   lambda: self._active_panel_widget._go_up()),
         ]
         for key, handler in shortcuts:
             sc = QShortcut(QKeySequence(key), self)
@@ -879,7 +897,14 @@ class MainWindow(QMainWindow):
             e("Files", "Compute hash…", self._compute_hash, icon="hash"),
             e("Files", "Calculate size", self._calc_size, icon="scale"),
             e("Files", "Find duplicates…", self._find_duplicates, icon="copy"),
-            e("Files", "Compress to ZIP…", lambda: p._compress_to_zip([x.full_path for x in p.selected_entries()]), icon="archive"),
+            # archives
+            e("Archive", "Pack files…", self._pack_files, "Alt+F5", icon="archive"),
+            e("Archive", "Extract here", self._extract_here, icon="archive"),
+            e("Archive", "Extract to subfolder", self._extract_to_subfolder, icon="archive"),
+            e("Archive", "Extract to…", self._extract_to, "Alt+F9", icon="archive"),
+            e("Archive", "Open archive under cursor", self._enter_archive, "Ctrl+PgDown", icon="archive"),
+            e("Archive", "Extract selection to the other panel", self._extract_to_other_panel, "F5", icon="archive"),
+            e("Archive", "Delete from archive", self._archive_delete, "F8", icon="trash"),
             e("Files", "Open with…", lambda: p._open_with(p.selected_entries()[0].full_path) if p.selected_entries() else None),
             e("Files", "Run as administrator", lambda: p._run_as_admin(p.selected_entries()[0].full_path) if p.selected_entries() else None, icon="shield"),
             # mark
@@ -977,14 +1002,28 @@ class MainWindow(QMainWindow):
 
     def _on_job_finished(self, jid: str, result: JobResult) -> None:
         spec = self._job_specs.pop(jid, None)
+        if spec is not None and spec.job_type in _ARCHIVE_JOB_TYPES:
+            # the archive changed on disk: drop its cached listing before refreshing (E7)
+            from src.archive import archive_manager as am
+            archive = spec.options.get("archive") or spec.destination
+            if archive:
+                am.invalidate(archive)
         self._left_panel.refresh()
         self._right_panel.refresh()
         if spec is None:
             return
+        if (spec.job_type == JobType.COMPRESS and spec.options.get("move_sources")
+                and result.status == JobStatus.FINISHED and not result.errors):
+            self._submit(JobSpec(                       # C5: only once packing succeeded
+                job_type=JobType.DELETE, sources=list(spec.sources),
+                options={"use_trash": True},
+                description=f"Remove {len(spec.sources)} packed item(s)",
+            ))
         verb = {
             JobType.COPY: "Copied", JobType.MOVE: "Moved", JobType.DELETE: "Deleted",
             JobType.RENAME: "Renamed", JobType.MKDIR: "Created", JobType.EXTRACT: "Extracted",
-            JobType.COMPRESS: "Compressed",
+            JobType.COMPRESS: "Compressed", JobType.ARCHIVE_ADD: "Added",
+            JobType.ARCHIVE_DELETE: "Deleted",
         }.get(spec.job_type)
         if result.status == JobStatus.CANCELLED:
             Toast.show_message(self, f"Cancelled: {spec.description}", "warning")
@@ -1006,6 +1045,10 @@ class MainWindow(QMainWindow):
         entries = self._active_panel_widget.selected_entries()
         if not entries:
             return
+        if self._active_panel_widget.in_archive:        # E3: unpack to temp, then view
+            for entry in entries[:3]:
+                self._open_archive_member(entry, edit=False)
+            return
         from src.viewer.file_viewer import FileViewerWindow
         for entry in entries[:3]:  # max 3 viewer windows
             if not entry.is_dir:
@@ -1017,6 +1060,9 @@ class MainWindow(QMainWindow):
         entries = self._active_panel_widget.selected_entries()
         paths = [e.full_path for e in entries if not e.is_dir]
         if not paths:
+            return
+        if self._active_panel_widget.in_archive:        # E4: edit and write back
+            self._open_archive_member(entries[0], edit=True)
             return
         cmd = self._cfg.config.external_editor.strip()
         if cmd:
@@ -1067,6 +1113,16 @@ class MainWindow(QMainWindow):
             self._active_panel_widget.deselect_all()
 
     def _copy_files(self) -> None:
+        """F5. Inside an archive it unpacks into the other panel; pointing at an
+        archive in the other panel it adds the files to it (X1, E1)."""
+        if self._active_panel_widget.in_archive:
+            self._extract_to_other_panel()
+            return
+        if self._inactive_panel_widget.in_archive:
+            paths = [e.full_path for e in self._active_panel_widget.selected_entries()
+                     if not e.is_parent]
+            self._archive_add(paths, self._inactive_panel_widget)
+            return
         self._copy_or_move(JobType.COPY)
 
     # ------------------------------------------------------------------ system clipboard (Ctrl+C / X / V)
@@ -1129,8 +1185,19 @@ class MainWindow(QMainWindow):
 
     def _transfer(self, paths: list[str], dest: str, move: bool) -> None:
         """Copy / move ``paths`` into ``dest`` through the job queue. A copy into
-        the file's own folder becomes "name - Kopie.ext"; a move onto itself is skipped."""
+        the file's own folder becomes "name - Kopie.ext"; a move onto itself is skipped.
+
+        A destination inside an archive turns into an "add to archive" job, so
+        paste and drag & drop reach an open archive as well (E1).
+        """
         from src.core.naming import copy_target, same_folder
+
+        target_panel = next(
+            (pan for pan in (self._left_panel, self._right_panel)
+             if pan.in_archive and str(pan.archive_location) == dest), None)
+        if target_panel is not None:
+            self._archive_add(paths, target_panel)
+            return
         suffix = self._cfg.config.copy_suffix or " - Kopie"
         job_type = JobType.MOVE if move else JobType.COPY
         plain: list[str] = []
@@ -1157,6 +1224,9 @@ class MainWindow(QMainWindow):
         self._copy_or_move(JobType.MOVE)
 
     def _delete_files(self) -> None:
+        if self._active_panel_widget.in_archive:
+            self._archive_delete()                      # E2
+            return
         entries = self._active_panel_widget.selected_entries()
         if not entries:
             return
@@ -1216,6 +1286,9 @@ class MainWindow(QMainWindow):
         self._active_panel_widget.start_rename()
 
     def _on_inline_rename(self, old_path: str, new_path: str) -> None:
+        if self._active_panel_widget.in_archive:
+            Toast.show_message(self, "Renaming inside an archive is not supported", "warning")
+            return
         if Path(new_path).exists():
             Toast.show_message(self, f"{Path(new_path).name} already exists", "warning")
             return
@@ -1502,5 +1575,7 @@ class MainWindow(QMainWindow):
         self._cfg.save()
         self._index.stop()
         self._terminal.shutdown()
+        self._left_panel.cleanup_temp()          # E6: archive members opened by F3 / F4
+        self._right_panel.cleanup_temp()
         self._job_queue.deleteLater()
         event.accept()

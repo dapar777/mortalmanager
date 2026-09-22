@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import uuid
 from collections import deque
@@ -16,6 +17,11 @@ from .job import JobPriority, JobResult, JobSpec, JobStatus, JobType
 from src.filesystem.local_fs import LocalFileSystemProvider
 
 logger = logging.getLogger(__name__)
+
+#: jobs handled by jobs/archive_ops.py in the executor
+_ARCHIVE_JOBS = frozenset({
+    JobType.EXTRACT, JobType.COMPRESS, JobType.ARCHIVE_ADD, JobType.ARCHIVE_DELETE,
+})
 
 
 @dataclass
@@ -192,6 +198,65 @@ class JobQueue(QObject):
             await self._fs.rename(old_path, spec.destination)
             result.undo_pairs = [(spec.destination, old_path)]
 
+        elif spec.job_type in _ARCHIVE_JOBS:
+            return await self._execute_archive(rj, result, progress_cb)
+
         result.files_processed = len(spec.sources)
         result.status = JobStatus.FINISHED
+        return result
+
+    async def _execute_archive(
+        self,
+        rj: _RunningJob,
+        result: JobResult,
+        progress_cb: Callable[[OperationProgress], None],
+    ) -> JobResult:
+        """Archive jobs run in the executor: the libraries are synchronous and a
+        big archive would otherwise block the asyncio loop (and with it the GUI)."""
+        from pathlib import Path
+
+        from . import archive_ops
+
+        spec = rj.spec
+        opts = spec.options
+        loop = asyncio.get_event_loop()
+        cancelled = rj.cancel_event.is_set
+
+        if spec.job_type == JobType.EXTRACT:
+            archive = Path(opts.get("archive") or spec.sources[0])
+            members = opts.get("members")
+            work = functools.partial(
+                archive_ops.extract, archive, Path(spec.destination), members,
+                progress_cb, cancelled, opts.get("strip_prefix", ""), spec.job_id,
+                opts.get("overwrite", True),
+            )
+        elif spec.job_type == JobType.COMPRESS:
+            base = opts.get("base_dir")
+            work = functools.partial(
+                archive_ops.compress, Path(spec.destination),
+                [Path(s) for s in spec.sources], Path(base) if base else None,
+                progress_cb, cancelled, opts.get("level"),
+                opts.get("store_paths", True), opts.get("append", False), spec.job_id,
+            )
+        elif spec.job_type == JobType.ARCHIVE_ADD:
+            base = opts.get("base_dir")
+            work = functools.partial(
+                archive_ops.add_to, Path(opts["archive"]),
+                [Path(s) for s in spec.sources], Path(base) if base else None,
+                opts.get("prefix", ""), progress_cb, cancelled, spec.job_id,
+            )
+        else:                                    # ARCHIVE_DELETE
+            work = functools.partial(
+                archive_ops.delete_from, Path(opts["archive"]),
+                list(spec.sources), progress_cb, cancelled, spec.job_id,
+            )
+
+        files, written, errors = await loop.run_in_executor(None, work)
+        result.files_processed = files
+        result.bytes_processed = written
+        result.errors = errors
+        if cancelled():
+            result.status = JobStatus.CANCELLED
+        else:
+            result.status = JobStatus.FINISHED
         return result

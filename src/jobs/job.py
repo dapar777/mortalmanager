@@ -34,6 +34,8 @@ class JobType(Enum):
     SEARCH = "search"
     EXTRACT = "extract"
     COMPRESS = "compress"
+    ARCHIVE_ADD = "archive_add"        # add files into an open archive
+    ARCHIVE_DELETE = "archive_delete"  # delete members of an open archive
     SYNC = "sync"
     CUSTOM = "custom"
 
