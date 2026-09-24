@@ -181,7 +181,10 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Menu staví `_build_context_menu`
   (nezobrazuje ho), takže ho `context_menu_entries` umí projít modulovou funkcí `_flatten_menu` a vydat
   jako `(popisek, ikona, handler)` pro paletu — **celé kontextové menu je v paletě** pod „Navigate › Context menu“
-  včetně položek Windows shellu; podmenu se zploští na „Rodič › Potomek“, oddělovače a zakázané položky vypadnou. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
+  včetně položek Windows shellu; podmenu se zploští na „Rodič › Potomek“, oddělovače a zakázané položky vypadnou.
+  **Menu musí přežít položky**: handler je QAction toho menu a shellová položka navíc potřebuje COM objekty
+  zavěšené na `menu._shell_refs`, takže panel si poslední menu drží v `_palette_menu` a zahodí ho až při stavbě
+  dalšího — s `deleteLater()` hned po sestavení první výběr z palety tiše neudělal nic. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
 - **archivy v GUI** — `gui/archive_actions.py` `ArchiveActionsMixin` (namíchaný do `MainWindow`) = zabalit
   (`_pack_files`, Alt+F5, dialog `dialogs/pack_dialog.py`: formát, úroveň, ukládat cesty, přesunout do archivu
@@ -223,7 +226,10 @@ maska `*?` (fnmatch), nebo regex (má-li regex metaznaky); výsledky jsou seřaz
 (rodič nad svými potomky: `C:\dir`, `C:\dir\dr1`, `C:\dir\dr2`); do LIMITu vybírá SQL **nejkratší cesty** (rodič má
 vždy kratší cestu než potomek, takže nikdy nevypadne, když je v seznamu jeho potomek – výběr podle délky názvu ani
 sken indexu `files(name…)` v abecedním pořadí názvů to nezaručí, proto má sken krátkých slov strop `SCAN_CAP` 4000 shod
-místo LIMITu); pro index se
+místo LIMITu). **Sken krátkého slova se zúží cestou dlouhého slova**, je-li nějaké: „p“ sedí na 343 tis. z 1 M
+názvů, ale test cesty jich nechá pár, takže bez zúžení psaní druhého slova („mortal p“) skenovalo skoro celý
+index (6 s); `CAR 3x` dál funguje, protože tam krátké slovo je to jediné v názvu. Debounce hledání v paletě
+je 220 ms, ať se dotazy při psaní neřetězí; pro index se
 z masky/regexu vytáhnou literální běhy ≥3 znaků na trigram MATCH a zbytek ověří SQLite funkce REGEXP.
 
 ## Pravidla vzhledu (viz solarqt MANUAL.md)

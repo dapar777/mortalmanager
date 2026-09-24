@@ -66,6 +66,42 @@ def test_words_match_path_one_in_name(tmp_path: Path):
     idx.close()
 
 
+def test_short_word_scan_is_narrowed_by_a_long_word(tmp_path: Path):
+    """Typing "word x" must not scan every name matching "x".
+
+    The short word needs a name scan (no trigram below 3 characters), but every
+    result also has to carry the long word in its path, so the scan starts from
+    those rows. Here only one file of many can match both.
+    """
+    root = tmp_path / "root"
+    (root / "mortal").mkdir(parents=True)
+    (root / "mortal" / "panel.py").write_text("x")
+    for i in range(50):                       # plenty of other "p" names elsewhere
+        (root / f"other{i}").mkdir()
+        (root / f"other{i}" / "page.py").write_text("x")
+    idx = FileIndex(tmp_path / "index.db")
+    idx.scan_root(str(root), Excluder([], []), idx.next_gen())
+
+    hits = idx.search("mortal p", kind="files")
+    assert [Path(h[0]).name for h in hits] == ["panel.py"]
+    assert "mortal" in hits[0][0]
+    idx.close()
+
+
+def test_short_word_alone_still_scans(tmp_path: Path):
+    """"CAR 3x" keeps working: the short word is the one matching the name."""
+    root = tmp_path / "root"
+    (root / "svn" / "CAR" / "db" / "2024_3x").mkdir(parents=True)
+    (root / "svn" / "OTHER" / "2024_3x").mkdir(parents=True)
+    idx = FileIndex(tmp_path / "index.db")
+    idx.scan_root(str(root), Excluder([], []), idx.next_gen())
+
+    hits = idx.search("CAR 3x", kind="dirs")
+    assert [h[1] for h in hits] == ["2024_3x"] and "CAR" in hits[0][0]
+    assert len(idx.search("3x", kind="dirs")) == 2          # single short word: full scan
+    idx.close()
+
+
 def test_results_in_tree_order(tmp_path: Path):
     """Palette order: a folder above its children, then siblings – not by name length."""
     root = tmp_path / "root"

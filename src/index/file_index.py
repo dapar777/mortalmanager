@@ -266,8 +266,10 @@ class FileIndex:
         Words: every word must occur somewhere in the full path and at least
         one of them in the name, so "CAR 3x" finds ``C:\\svn\\CAR\\db\\2024_3x``.
         The name is what the index can find – words of 3+ characters as MATCH
-        phrases (OR-ed: any of them in the name), shorter ones as a LIKE scan
-        of the covering index files(name, is_dir) – and the path condition is
+        phrases (OR-ed: any of them in the name); a word shorter than that is
+        scanned over the covering index files(name, is_dir) **only when no
+        longer word exists**, because that scan costs hundreds of ms – and
+        the path condition is
         then checked on those candidates with REGEXP (case-insensitive incl.
         non-ASCII, unlike LIKE). Do NOT use LIKE … ESCAPE here: ESCAPE
         disables the trigram optimisation and turns a 5 ms lookup into a
@@ -320,20 +322,34 @@ class FileIndex:
                 f" WHERE files_fts MATCH ?{kind_cond.format(a='f')}{tail}",
                 [match, *extra_params],
             ))
-        # a scan cannot be ordered before it is complete; it walks the covering index in
-        # *name* order, so its own LIMIT must be generous or a parent whose name sorts
-        # after its children's names would be cut off before the ORDER BY below sees it
+        # A scan cannot be ordered before it is complete; it walks the covering index
+        # in *name* order, so its LIMIT must be generous or a parent whose name sorts
+        # after its children's would be cut off before the ORDER BY below sees it.
         scan_cap = max(limit, self.SCAN_CAP)
         if short_toks:
-            # alias n is scanned through the covering index files(name, is_dir) (only name /
-            # is_dir / rowid are read from it), the row itself is fetched by rowid for the
-            # matches; the cap stops the scan early for common tokens
+            # A word below the trigram minimum has to be found by scanning names.
+            # "p" matches 343 000 of 1 M rows while only a couple survive the path
+            # conditions, so scanning the whole index costs seconds. When a longer
+            # word is present, every hit must also carry that word in its path, so
+            # the scan starts from the rows the trigram index finds for it and only
+            # falls back to the full name scan when there is no such word ("CAR 3x"
+            # still works: "3x" is the word in the name, "CAR" only in the path).
             like = " OR ".join("n.name LIKE ?" for _ in short_toks)
-            branches.append((
-                f"SELECT {cols} FROM files AS n JOIN files AS f ON f.id = n.id"
-                f" WHERE ({like}){kind_cond.format(a='n')}{tail} LIMIT ?",
-                [*(f"%{t}%" for t in short_toks), *extra_params, scan_cap],
-            ))
+            like_params = [f"%{t}%" for t in short_toks]
+            if long_toks:
+                narrow = " OR ".join('n.path LIKE ?' for _ in long_toks)
+                branches.append((
+                    f"SELECT {cols} FROM files AS n JOIN files AS f ON f.id = n.id"
+                    f" WHERE ({like}) AND ({narrow})"
+                    f"{kind_cond.format(a='n')}{tail} LIMIT ?",
+                    [*like_params, *(f"%{t}%" for t in long_toks), *extra_params, scan_cap],
+                ))
+            else:
+                branches.append((
+                    f"SELECT {cols} FROM files AS n JOIN files AS f ON f.id = n.id"
+                    f" WHERE ({like}){kind_cond.format(a='n')}{tail} LIMIT ?",
+                    [*like_params, *extra_params, scan_cap],
+                ))
         if regex is not None and not branches:
             branches.append((
                 f"SELECT {cols} FROM files f WHERE 1{kind_cond.format(a='f')}{tail} LIMIT ?",

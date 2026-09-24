@@ -360,6 +360,7 @@ class PanelWidget(QFrame):
         self._generation = 0
         self._loading = False
         self._location = None      # ArchiveLocation while browsing inside an archive
+        self._palette_menu = None  # context menu backing the palette entries (see context_menu_entries)
         self._session_password = None   # password not kept by the manager (user said no)
         self._temp = None          # gui.archive_browse.TempExtracts, created on demand
         self._vcs = _VcsInfo()
@@ -1116,11 +1117,16 @@ class PanelWidget(QFrame):
         apart. Submenus come out flattened as "Parent › Child"; separators and
         disabled items are dropped.
         """
+        # The menu must outlive the entries: every handler is a QAction of it, and a
+        # shell item also needs the COM objects parented on it (``menu._shell_refs``).
+        # Deleting it here made a palette pick do nothing at all – keep the last one
+        # alive on the panel and drop it only when the next menu is built.
+        old = getattr(self, "_palette_menu", None)
         menu = self._build_context_menu(None)
-        try:
-            return _flatten_menu(menu)
-        finally:
-            menu.deleteLater()
+        self._palette_menu = menu
+        if old is not None:
+            old.deleteLater()
+        return _flatten_menu(menu)
 
     def _show_context_menu(self, _pos: object) -> None:
         """Rich right-click menu: Commander operations + Windows shell menu."""

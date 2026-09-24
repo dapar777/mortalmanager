@@ -98,7 +98,10 @@ class CommandPalette(QDialog):
         self._search_fn = None                       # search callable of the current dynamic level
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
-        self._search_timer.setInterval(120)
+        # long enough that a burst of keystrokes queues one index query, not one
+        # per letter: a wide query (a long word plus a one-letter second word)
+        # can still take a few hundred ms, and those would pile up
+        self._search_timer.setInterval(220)
         self._search_timer.timeout.connect(lambda: self._filter(self.search.text()))
         self._stack: list[tuple[list[dict], str]] = []   # (entries, breadcrumb title) of parent levels
         self._deep: list[dict] | None = None             # flattened sub-level leaves, built on first search
