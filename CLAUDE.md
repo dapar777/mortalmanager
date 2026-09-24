@@ -178,7 +178,10 @@ Vrstvy jsou balíčky pod `src/`, GUI závisí na všech ostatních, ostatní na
   je menu aktuální složky (`_populate_windows_shell_menu([cur])`; kořen disku se váže přes desktop folder a absolutní
   pidl). Kontextové menu má nahoře sekci „Frequently used“:
   `_add_frequent_section` počítá kliknutí na položky (klíč = text bez `&` a zkratky, i shell položky) do DB
-  settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
+  settings `context_menu_usage` a ukazuje až 4 položky s ≥2 použitími. Menu staví `_build_context_menu`
+  (nezobrazuje ho), takže ho `context_menu_entries` umí projít modulovou funkcí `_flatten_menu` a vydat
+  jako `(popisek, ikona, handler)` pro paletu — **celé kontextové menu je v paletě** pod „Navigate › Context menu“
+  včetně položek Windows shellu; podmenu se zploští na „Rodič › Potomek“, oddělovače a zakázané položky vypadnou. Dialogy v `gui/dialogs/` jsou stock widgety stylované QSS;
   `command_palette.py` je paleta „Kategorie · Příkaz [zkratka]“ podle Task Masteru.
 - **archivy v GUI** — `gui/archive_actions.py` `ArchiveActionsMixin` (namíchaný do `MainWindow`) = zabalit
   (`_pack_files`, Alt+F5, dialog `dialogs/pack_dialog.py`: formát, úroveň, ukládat cesty, přesunout do archivu
@@ -262,6 +265,10 @@ Schránka se soubory: `FileTableView` Ctrl+C/X/V → signál `clipboard_requeste
 (copy/move), takže funguje i mezi UC a Explorerem; vložení do téže složky pojmenuje `core/naming.copy_target`
 („název - Kopie.ext“, `AppConfig.copy_suffix`) a jde jako COPY job s plnou cílovou cestou (`_copy_one` bere
 neexistující cíl jako jméno souboru).
+
+Výchozí volby v dialozích (jako v Total Commanderu): potvrzení mazání má **default na „Delete“** (Enter maže,
+Esc ruší, tlačítko si nechává `danger` styl), kopírovací dialog má **„Overwrite existing files“ zaškrtnuté**
+(kopie mezi panely obvykle cílovou složku aktualizuje a tiché přeskočení vypadá, že se nestalo nic).
 
 Konvence: Qt widgety komunikují signály, ne přímými voláními do rodiče; stav, který má přežít restart, patří do
 `DatabaseManager`, ne do souborů; `FileEntry.full_path` je jediný zdroj cesty položky.

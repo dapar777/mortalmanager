@@ -837,6 +837,21 @@ class MainWindow(ArchiveActionsMixin, QMainWindow):
             panel.navigate_to(path)
             p.give_focus()
 
+        def context_menu_children() -> list[dict]:
+            """The panel's context menu as palette entries, Windows shell items included.
+
+            Built from the real menu (``PanelWidget.context_menu_entries``) so the two
+            can never drift apart – the palette is the registry of every command.
+            """
+            try:
+                return [
+                    e("Menu", label, handler, icon=icon)
+                    for label, icon, handler in p.context_menu_entries()
+                ]
+            except Exception as exc:                 # a shell extension may misbehave
+                logger.warning("Building the context menu for the palette failed: %s", exc)
+                return [e("Menu", "Context menu is not available here", lambda: None)]
+
         def tab_children() -> list[dict]:
             return [e("Tab", label, lambda i=i: (p.switch_tab(i), p.give_focus()),
                       checked=(i == p._current_tab_index))
@@ -941,6 +956,8 @@ class MainWindow(ArchiveActionsMixin, QMainWindow):
             e("Navigate", "Windows shell menu", lambda: p._show_windows_shell_menu(
                 [x.full_path for x in p.selected_entries()] or [p.current_path],
                 self.mapToGlobal(p.rect().center()))),
+            e("Navigate", "Context menu", children=context_menu_children, icon="menu",
+              status=lambda: "the right-click menu of the item under the cursor"),
             # panels
             e("Panels", "Switch active panel", self._switch_panel, "Tab", icon="columns"),
             e("Panels", "Open this folder in the other panel", lambda: go(other, p.current_path)),
@@ -1245,8 +1262,11 @@ class MainWindow(ArchiveActionsMixin, QMainWindow):
             btn_delete.setProperty("danger", "true")
             btn_cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             btn_cancel.setProperty("quiet", "true")
-            box.setDefaultButton(btn_cancel)
+            # Enter deletes (Total Commander does the same); Esc still cancels, and
+            # the button keeps its danger styling so the default is not a quiet trap
+            box.setDefaultButton(btn_delete)
             box.setEscapeButton(btn_cancel)
+            btn_delete.setFocus()
             box.exec()
             if box.clickedButton() is not btn_delete:
                 return

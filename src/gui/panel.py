@@ -99,6 +99,30 @@ def fit_menu_on_screen(menu, global_pos):
     return menu.exec(global_pos)
 
 
+def _flatten_menu(menu, prefix: str = "") -> list[tuple[str, str | None, object]]:
+    """Menu as (label, icon name, handler) triples for the command palette.
+
+    Submenus become "Parent › Child"; separators, disabled items and the
+    shortcut hint after the tab are dropped. The icon name is not recoverable
+    from a QAction (shell items carry a bitmap, ours a drawn icon), so entries
+    get None and the palette falls back to its own.
+    """
+    out: list[tuple[str, str | None, object]] = []
+    for action in menu.actions():
+        if action.isSeparator() or not action.isEnabled() or not action.isVisible():
+            continue
+        label = action.text().split("	", 1)[0].replace("&", "").strip()
+        if not label:
+            continue
+        full = f"{prefix} › {label}" if prefix else label
+        sub = action.menu()
+        if sub is not None:
+            out.extend(_flatten_menu(sub, full))
+        else:
+            out.append((full, None, action.trigger))
+    return out
+
+
 def _natural_height(menu) -> int:
     """Single-column height of a menu. QMenu.sizeHint() already folds the menu
     into columns to fit the screen, so it never reports the overflow itself."""
@@ -1084,26 +1108,52 @@ class PanelWidget(QFrame):
 
     # ------------------------------------------------------------------ context menu
 
+    def context_menu_entries(self) -> list[tuple[str, str | None, object]]:
+        """The context menu of the current selection as (label, icon, handler).
+
+        The palette offers the whole menu ("Navigate › Context menu"), and building
+        it from the same QMenu the right-click shows keeps the two from drifting
+        apart. Submenus come out flattened as "Parent › Child"; separators and
+        disabled items are dropped.
+        """
+        menu = self._build_context_menu(None)
+        try:
+            return _flatten_menu(menu)
+        finally:
+            menu.deleteLater()
+
     def _show_context_menu(self, _pos: object) -> None:
         """Rich right-click menu: Commander operations + Windows shell menu."""
         from PySide6.QtCore import QPoint
         from PySide6.QtGui import QCursor
-        from PySide6.QtWidgets import QApplication, QMenu
 
         self.request_focus.emit()
+        if self._location is not None:
+            self._show_archive_context_menu(self.selected_entries(), _pos)
+            return
+        menu = self._build_context_menu(_pos)
+        if menu is None:
+            return
+        gp = (self._table.viewport().mapToGlobal(_pos)
+              if isinstance(_pos, QPoint) and _pos.x() >= 0 else QCursor.pos())
+        fit_menu_on_screen(menu, gp)
+
+    def _build_context_menu(self, _pos: object):
+        """Assemble the menu (without showing it) – shared by the right-click and
+        the palette."""
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication, QMenu
+
         entries = self.selected_entries()
         paths = [e.full_path for e in entries if not e.is_parent]
         mw = self.window()
-        if self._location is not None:
-            self._show_archive_context_menu(entries, _pos)
-            return
 
         def act(menu: QMenu, text: str, icon_name: str | None, handler) -> None:
             a = menu.addAction(icons.icon(icon_name), text) if icon_name else menu.addAction(text)
             a.triggered.connect(handler)
 
         menu = QMenu(self)
-        gp = self._table.viewport().mapToGlobal(_pos) if isinstance(_pos, QPoint) and _pos.x() >= 0 else QCursor.pos()
 
         if not paths:
             # ".." or empty space: Total Commander shows the menu of the current directory
@@ -1119,8 +1169,7 @@ class PanelWidget(QFrame):
             menu.addSeparator()
             self._populate_windows_shell_menu(menu, [cur])
             self._add_frequent_section(menu)
-            fit_menu_on_screen(menu, gp)
-            return
+            return menu
 
         is_single = len(paths) == 1
         first = paths[0]
@@ -1185,7 +1234,7 @@ class PanelWidget(QFrame):
 
         self._populate_windows_shell_menu(menu, paths)
         self._add_frequent_section(menu)
-        fit_menu_on_screen(menu, gp)
+        return menu
 
     # ---- "frequently used" section (usage counted per menu label, stored in the DB)
 

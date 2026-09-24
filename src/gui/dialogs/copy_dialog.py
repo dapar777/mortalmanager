@@ -52,7 +52,10 @@ class CopyDialog(QDialog):
         dest_row.addWidget(btn_browse)
         layout.addLayout(dest_row)
 
+        # checked by default: copying between the panels is normally meant to
+        # refresh the target, and a silent skip looks like the copy did nothing
         self._overwrite_cb = QCheckBox("Overwrite existing files")
+        self._overwrite_cb.setChecked(True)
         layout.addWidget(self._overwrite_cb)
 
         buttons = QDialogButtonBox(
